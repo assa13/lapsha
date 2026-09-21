@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/><meta name="theme-color" content="#1950bd"/><title>Лапша — 3D idle</title><link rel="icon" href="./assets/currency.png"/>  <script type="module" crossorigin src="./assets/index-BRjoJeGT.js?v=7"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-BARrXT6a.css?v=4">
+</head>
+<body>
+  <main id="game" aria-label="Лапша — игра с физикой проводов">
+    <canvas id="scene" aria-label="Проведите поперёк провода, чтобы разрезать его"></canvas>
+    <div id="trail" aria-hidden="true"></div><div id="rewards" aria-hidden="true"></div>
+    <header id="hud"><div><span class="eyebrow">ЛАПША</span><span id="material-label">Золото · ×1</span></div><div class="tools"><button id="physics-toggle" aria-label="Открыть параметры физики" aria-expanded="false">Физика</button><button id="reset" aria-label="Сбросить весь прогресс">Сброс</button><button id="sound" aria-label="Включить звук" aria-pressed="false">Звук выкл.</button><button id="pause" aria-label="Приостановить игру" aria-pressed="false">Ⅱ</button></div></header>
+    <aside id="physics-panel" aria-label="Параметры физики" hidden><div class="physics-panel-heading"><strong>Физика</strong><button id="physics-close" aria-label="Закрыть параметры физики">×</button></div><div id="physics-controls"></div><button id="physics-reset">По умолчанию</button></aside>
+    <div id="hint"><strong>Разрежь. Урони. Собери.</strong><span>Проведи пальцем или мышью поперёк провода</span><div class="hint-line"></div></div>
+    <div id="pile-note" hidden>Подача приостановлена. Разрежь накопившийся провод.</div>
+    <section id="shop" aria-label="Магазин проводов" hidden><div class="shop-heading"><span class="eyebrow">КОЛЛЕКЦИЯ</span><h1>Больше блеска.<br/>Больше монет.</h1></div><div id="shop-grid"></div><div class="upgrades"><button id="wire-upgrade"></button><button id="feed-upgrade"></button></div></section>
+    <section id="detail" role="dialog" aria-modal="true" aria-labelledby="detail-title" hidden><button id="close-detail" aria-label="Закрыть описание">×</button><div class="detail-copy"><span class="eyebrow">НОВЫЙ МАТЕРИАЛ</span><h2 id="detail-title"></h2><p id="detail-description"></p><button id="buy"></button><button id="detail-wire-upgrade"></button></div></section>
+    <div id="pause-overlay" hidden><h2>Пауза</h2><button id="resume">Продолжить</button></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <footer id="bank"><div class="counter"><button id="back" aria-label="Открыть коллекцию"><img src="./assets/currency.png" alt=""/></button><div class="balance"><span>ТВОЙ БАНК</span><strong id="coins">0</strong></div></div><button id="shop-button" aria-label="Открыть магазин" aria-expanded="false"><img src="./assets/cart.svg" alt=""/></button></footer>
+    <div id="error" role="alert" hidden></div>
+  </main>
+</body></html>
