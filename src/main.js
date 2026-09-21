@@ -7,19 +7,18 @@ const $=id=>document.getElementById(id),format=n=>Math.floor(n).toLocaleString('
 let save;try{save=parseSave(localStorage.getItem(SAVE_KEY));}catch{save=parseSave(null);}
 const PHYSICS_SAVE_KEY='lapsha-physics-v1';
 const PHYSICS_CONTROLS=[
-  ['feedSpeed','Скорость подачи',.05,10,.05],['wireCount','Количество проводов',1,500,1],['fixedStep','Шаг физики',.002,.033,.0001],['maxStepsPerFrame','Макс. шагов/кадр',1,12,1],
-  ['segmentLength','Длина сегмента',.03,.5,.005],['radius','Радиус провода',.01,.3,.002],['floor','Высота пола',-10,5,.05],['top','Высота сопла',-5,15,.05],
-  ['gravity','Гравитация',0,50,.1],['horizontalDamping','Затухание XY',.8,1,.001],['depthDamping','Затухание Z',.8,1,.001],['turbulence','Колебание',0,2,.005],
-  ['anchorFrequency','Частота сопла',0,5,.05],['anchorSway','Амплитуда сопла',0,1,.01],['anchorFollow','Скорость сопла',.1,30,.1],
-  ['bendRatio','Предел изгиба',.5,1.2,.01],['bendStiffness','Жёсткость изгиба',0,1,.01],['floorFriction','Трение пола',0,.3,.005],
-  ['wallHalfWidth','Полуширина камеры',.2,10,.05],['depthHalfWidth','Полуглубина',.05,5,.01],['solverPasses','Проходов решателя',1,30,1],
-  ['denseSolverPasses','Проходов при нагрузке',1,30,1],['denseThreshold','Порог нагрузки',10,10000,10],['pileStopY','Стоп кучи Y',-10,15,.05],
-  ['pileResumeY','Возобновление Y',-10,15,.05],['pileStopDelay','Задержка стопа',0,10,.05],['pileResumeDelay','Задержка запуска',0,10,.05],
-  ['burnDelay','Задержка горения',0,30,.1],['burnDuration','Время горения',.05,10,.05]
-].map(([key,label,min,max,step])=>({key,label,min,max,step,integer:step===1||step===10}));
+  ['feedSpeed','Скорость подачи',.05,10,.05],['wireCount','Количество проводов',1,500,1],
+  ['radius','Толщина провода',.01,.3,.002],['gravity','Гравитация',0,50,.1],['turbulence','Колебание',0,2,.005],
+  ['bendStiffness','Жёсткость изгиба',0,1,.01],['floorFriction','Трение пола',0,.3,.005],['wireFriction','Трение проводов',0,.5,.005],
+  ['wallHalfWidth','Ширина сцены',.2,10,.05],['depthHalfWidth','Глубина сцены',.05,2,.01]
+].map(([key,label,min,max,step])=>({key,label,min,max,step,integer:step===1}));
+const WIRE_TEXTURES=[['default','Игровые материалы'],...MATERIALS.map(m=>[m.id,m.name]),['electric','Электрический шейдер'],['molten','Расплавленный металл'],['chromatic','Хроматическая плазма']];
 function loadPhysicsSettings(){try{const value=JSON.parse(localStorage.getItem(PHYSICS_SAVE_KEY));return value&&typeof value==='object'?value:{};}catch{return {};}}
 const storedPhysics=loadPhysicsSettings();
 const storedParameters={};for(const spec of PHYSICS_CONTROLS){if(spec.key==='feedSpeed'||spec.key==='wireCount')continue;let value=storedPhysics.parameters?.[spec.key];if(!Number.isFinite(value))continue;value=Math.max(spec.min,Math.min(spec.max,value));storedParameters[spec.key]=spec.integer?Math.round(value):value;}
+if(storedParameters.floorFriction===.015)storedParameters.floorFriction=PHYSICS_DEFAULTS.floorFriction;
+if(storedParameters.wireFriction===.03)storedParameters.wireFriction=PHYSICS_DEFAULTS.wireFriction;
+if(storedParameters.depthHalfWidth===.58)storedParameters.depthHalfWidth=PHYSICS_DEFAULTS.depthHalfWidth;
 let scene,mode='game',detailIndex=-1,paused=false,resetting=false,toastTimer,saveTimer,audioContext;
 function persist(){if(resetting)return;try{localStorage.setItem(SAVE_KEY,JSON.stringify(save));}catch{notify('Браузер не разрешает сохранение. Прогресс доступен до закрытия.');}}
 function queueSave(){clearTimeout(saveTimer);saveTimer=setTimeout(persist,250);}
@@ -31,13 +30,14 @@ const feedSpeedSpec=PHYSICS_CONTROLS.find(spec=>spec.key==='feedSpeed'),wireCoun
 let feedSpeedOverride=Number.isFinite(storedPhysics.feedSpeedOverride)?Math.max(feedSpeedSpec.min,Math.min(feedSpeedSpec.max,storedPhysics.feedSpeedOverride)):null;
 let wireCountOverride=Number.isFinite(storedPhysics.wireCountOverride)?Math.round(Math.max(wireCountSpec.min,Math.min(wireCountSpec.max,storedPhysics.wireCountOverride))):null;
 if(wireCountOverride!==null&&wireCountOverride<save.wireCount)wireCountOverride=null;
+let wireTextureStyle=WIRE_TEXTURES.some(([id])=>id===storedPhysics.wireTextureStyle)?storedPhysics.wireTextureStyle:'default';
 const world=new RopeWorld({onBurn:reward,materials:save.activeMaterials,wireCount:wireCountOverride??save.wireCount,parameters:storedParameters});
 const physicsInputs=new Map();
 function physicsValue(value){if(typeof value==='boolean')return value?'да':'нет';if(!Number.isFinite(value))return String(value);return Number.isInteger(value)?String(value):value.toFixed(4).replace(/0+$/,'').replace(/\.$/,'');}
-function persistPhysics(){try{localStorage.setItem(PHYSICS_SAVE_KEY,JSON.stringify({parameters:world.params,feedSpeedOverride,wireCountOverride}));}catch{notify('Не удалось сохранить параметры физики.');}}
+function persistPhysics(){try{localStorage.setItem(PHYSICS_SAVE_KEY,JSON.stringify({parameters:world.params,feedSpeedOverride,wireCountOverride,wireTextureStyle}));}catch{notify('Не удалось сохранить параметры физики.');}}
 function parameterValue(key){if(key==='feedSpeed')return world.feedSpeed;if(key==='wireCount')return world.feeders.length;return world.params[key];}
 function syncPhysicsControls(){for(const {key}of PHYSICS_CONTROLS){const input=physicsInputs.get(key);if(input&&document.activeElement!==input)input.value=physicsValue(parameterValue(key));}}
-function buildPhysicsControls(){for(const spec of PHYSICS_CONTROLS){const label=document.createElement('label'),name=document.createElement('span'),input=document.createElement('input');name.textContent=spec.label;input.type='number';input.min=spec.min;input.max=spec.max;input.step=spec.step;input.value=physicsValue(parameterValue(spec.key));input.addEventListener('input',()=>{let value=input.valueAsNumber;if(!Number.isFinite(value))return;value=Math.max(spec.min,Math.min(spec.max,value));if(spec.integer)value=Math.round(value);if(spec.key==='feedSpeed'){feedSpeedOverride=value;world.feedSpeed=value;}else if(spec.key==='wireCount'){wireCountOverride=value;world.setWireCount(value);}else world.params[spec.key]=value;persistPhysics();});label.append(name,input);$('physics-controls').append(label);physicsInputs.set(spec.key,input);}}
+function buildPhysicsControls(){for(const spec of PHYSICS_CONTROLS){const label=document.createElement('label'),name=document.createElement('span'),input=document.createElement('input');name.textContent=spec.label;input.type='number';input.min=spec.min;input.max=spec.max;input.step=spec.step;input.value=physicsValue(parameterValue(spec.key));input.addEventListener('input',()=>{let value=input.valueAsNumber;if(!Number.isFinite(value))return;value=Math.max(spec.min,Math.min(spec.max,value));if(spec.integer)value=Math.round(value);if(spec.key==='feedSpeed'){feedSpeedOverride=value;world.feedSpeed=value;}else if(spec.key==='wireCount'){wireCountOverride=value;world.setWireCount(value);}else{world.params[spec.key]=value;if(spec.key==='depthHalfWidth')world.setWireCount(world.feeders.length);}persistPhysics();});label.append(name,input);$('physics-controls').append(label);physicsInputs.set(spec.key,input);}for(const [id,label]of WIRE_TEXTURES){const option=document.createElement('option');option.value=id;option.textContent=label;$('physics-texture').append(option);}$('physics-texture').value=wireTextureStyle;$('physics-texture').onchange=()=>{wireTextureStyle=$('physics-texture').value;scene?.setWireTexture(wireTextureStyle);persistPhysics();};}
 function setPhysicsPanel(open){$('physics-panel').hidden=!open;$('physics-toggle').setAttribute('aria-expanded',String(open));if(open)syncPhysicsControls();}
 buildPhysicsControls();
 function updateHUD(){
@@ -66,7 +66,7 @@ $('detail-wire-upgrade').onclick=()=>buyUpgrade('wire');
 $('sound').onclick=()=>{save.sound=!save.sound;persist();updateHUD();tone(660);};
 $('reset').onclick=()=>{if(!window.confirm('Сбросить весь прогресс и начать заново?'))return;resetting=true;clearTimeout(saveTimer);try{localStorage.removeItem(SAVE_KEY);}catch{}window.location.reload();};
 $('physics-toggle').onclick=()=>setPhysicsPanel($('physics-panel').hidden);$('physics-close').onclick=()=>setPhysicsPanel(false);
-$('physics-reset').onclick=()=>{Object.assign(world.params,PHYSICS_DEFAULTS);feedSpeedOverride=null;wireCountOverride=null;world.setWireCount(save.wireCount);updateHUD();syncPhysicsControls();persistPhysics();notify('Параметры физики сброшены.');};
+$('physics-reset').onclick=()=>{Object.assign(world.params,PHYSICS_DEFAULTS);feedSpeedOverride=null;wireCountOverride=null;wireTextureStyle='default';world.setWireCount(save.wireCount);scene?.setWireTexture(wireTextureStyle);$('physics-texture').value=wireTextureStyle;updateHUD();syncPhysicsControls();persistPhysics();notify('Параметры физики сброшены.');};
 function setPaused(value){paused=value;$('pause-overlay').hidden=!paused;$('pause').setAttribute('aria-pressed',String(paused));$('pause').setAttribute('aria-label',paused?'Продолжить игру':'Приостановить игру');dragging=false;}
 $('pause').onclick=()=>setPaused(!paused);$('resume').onclick=()=>setPaused(false);
 let dragging=false,lastPoint,lastClient;
@@ -82,7 +82,7 @@ function frame(now){requestAnimationFrame(frame);const dt=Math.min((now-lastTime
   const physicsStart=performance.now(),step=world.params.fixedStep,maxSteps=Math.round(world.params.maxStepsPerFrame);lastSteps=0;if(!paused){accumulator+=dt;while(accumulator>=step&&lastSteps<maxSteps){world.step(step);accumulator-=step;lastSteps++;}if(accumulator>=step)accumulator=step;}else accumulator=0;
   lastPhysicsMs=performance.now()-physicsStart;updatePileNote();const renderStart=performance.now();scene.render(now/1000,world.ropes);lastRenderMs=performance.now()-renderStart;frames++;
 }
-try{scene=new GameScene($('scene'));updateHUD();requestAnimationFrame(frame);$('scene').addEventListener('webglcontextlost',e=>{e.preventDefault();setPaused(true);notify('Графический контекст потерян. Обнови страницу; прогресс сохранён.');persist();});
+try{scene=new GameScene($('scene'));scene.setWireTexture(wireTextureStyle);updateHUD();requestAnimationFrame(frame);$('scene').addEventListener('webglcontextlost',e=>{e.preventDefault();setPaused(true);notify('Графический контекст потерян. Обнови страницу; прогресс сохранён.');persist();});
   // Read-only diagnostics for repeatable browser validation. No currency/debug cheats.
   window.__lapsha={snapshot:()=>({mode,paused,coins:save.coins,cuts:save.cuts,selected:save.selected,activeMaterials:[...save.activeMaterials],owned:[...save.owned],feedLevel:save.feedLevel,wireCount:save.wireCount,frames,simulationTime:world.time,nodeCount:world.count,pileHeight:world.pileHeight,extrusionBlocked:world.extrusionBlocked,performance:{physicsMs:lastPhysicsMs,renderMs:lastRenderMs,steps:lastSteps},ropes:world.ropes.map(r=>({attached:r.attached,landed:r.landed,restTime:r.restTime,burning:r.fade>0,material:r.material,linkMaterials:[...r.linkMaterials],emitMaterial:r.emitMaterial,nodes:r.nodes.map(p=>({x:p.x,y:p.y,z:p.z})),length:r.links.reduce((a,b)=>a+b,0)}))}),project:p=>scene.worldToScreen(p)};
 }catch(error){console.error(error);$('error').hidden=false;$('error').textContent='Не удалось запустить 3D. Открой игру в Chrome, Edge или Firefox с включённым аппаратным ускорением. '+error.message;}

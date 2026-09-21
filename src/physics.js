@@ -3,7 +3,7 @@
 export const STEP=1/120, SEGMENT=.14, RADIUS=.066, FLOOR=-3.88, TOP=6.75;
 export const BURN_DELAY=3, BURN_DURATION=.8;
 export const PILE_STOP_Y=TOP-1, PILE_RESUME_Y=TOP-1.6, PILE_STOP_DELAY=.35, PILE_RESUME_DELAY=.6;
-export const PHYSICS_DEFAULTS=Object.freeze({fixedStep:STEP,maxStepsPerFrame:4,segmentLength:SEGMENT,radius:RADIUS,floor:FLOOR,top:TOP,gravity:14,horizontalDamping:.998,depthDamping:.993,turbulence:.04,anchorFrequency:.65,anchorSway:.08,anchorFollow:5,bendRatio:.94,bendStiffness:.16,floorFriction:.015,wallHalfWidth:2.84,depthHalfWidth:.58,solverPasses:10,denseSolverPasses:6,denseThreshold:800,pileStopY:PILE_STOP_Y,pileResumeY:PILE_RESUME_Y,pileStopDelay:PILE_STOP_DELAY,pileResumeDelay:PILE_RESUME_DELAY,burnDelay:BURN_DELAY,burnDuration:BURN_DURATION});
+export const PHYSICS_DEFAULTS=Object.freeze({fixedStep:STEP,maxStepsPerFrame:4,segmentLength:SEGMENT,radius:RADIUS,floor:FLOOR,top:TOP,gravity:14,horizontalDamping:.998,depthDamping:.993,turbulence:.04,anchorFrequency:.65,anchorSway:.08,anchorFollow:5,bendRatio:.94,bendStiffness:.16,floorFriction:.025,wireFriction:.12,wallHalfWidth:2.84,depthHalfWidth:.29,solverPasses:10,denseSolverPasses:6,denseThreshold:800,pileStopY:PILE_STOP_Y,pileResumeY:PILE_RESUME_Y,pileStopDelay:PILE_STOP_DELAY,pileResumeDelay:PILE_RESUME_DELAY,burnDelay:BURN_DELAY,burnDuration:BURN_DURATION});
 export const PHYSICS_PARAMETERS=PHYSICS_DEFAULTS;
 const node=(x,y,z=0)=>({x,y,z,px:x,py:y,pz:z});
 const clone=p=>({...p});
@@ -35,7 +35,7 @@ export class RopeWorld{
   get feeders(){return this.ropes.filter(r=>r.attached);}
   setWireCount(count,length=1.3,initialize=false){
     const n=Math.max(1,Math.floor(count)),columns=Math.min(n,15),rows=Math.ceil(n/columns),span=Math.min(4.2,(columns-1)*1.5);
-    const position=i=>({x:columns===1?0:((i%columns)/(columns-1)-.5)*span,z:rows===1?0:(Math.floor(i/columns)/(rows-1)-.5)});
+    const position=i=>({x:columns===1?0:((i%columns)/(columns-1)-.5)*span,z:rows===1?0:(Math.floor(i/columns)/(rows-1)-.5)*this.params.depthHalfWidth*1.72});
     while(this.feeders.length>n){const feeder=this.feeders.at(-1);this.ropes.splice(this.ropes.indexOf(feeder),1);}
     while(this.feeders.length<n){const i=this.feeders.length,p=position(i);this.addFeeder(this.nextMaterial()||'gold',this.rotation.length?length:.3,p.x,p.z);}
     this.feeders.forEach((r,i)=>{const p=position(i);r.sourceIndex=i;r.experimentalShader=i===1;if(initialize){const dx=p.x-r.anchorX,dz=p.z-r.anchorZ;for(const v of r.nodes){v.x+=dx;v.px+=dx;v.z+=dz;v.pz+=dz;}}r.anchorX=p.x;r.anchorZ=p.z;});
@@ -64,6 +64,7 @@ export class RopeWorld{
       }
     }
     const passes=total>this.params.denseThreshold?Math.round(this.params.denseSolverPasses):Math.round(this.params.solverPasses);
+    this.collisionPassesThisStep=Math.ceil(passes/2)+(passes%2===0?1:0);
     for(let pass=0;pass<passes;pass++){
       for(const r of this.ropes){if(r.fade>0)continue;
         for(let i=0;i<r.links.length;i++)this.constrain(r.nodes[i],r.nodes[i+1],r.links[i],r.attached&&i===0,1);
@@ -74,7 +75,7 @@ export class RopeWorld{
           if(Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z)<minimum)this.constrain(a,b,minimum,r.attached&&i===0,this.params.bendStiffness);
         }
       }
-      if(pass===passes-1||pass%(total>this.params.denseThreshold?passes:2)===0)this.collide();
+      if(pass===passes-1||pass%2===0)this.collide();
       for(const r of this.ropes){if(r.fade>0)continue;for(let i=0;i<r.nodes.length;i++){
         const p=r.nodes[i];if(r.attached&&i===0)continue;
         if(p.y<floor+radius){const retain=1-this.params.floorFriction;p.y=floor+radius;p.py=Math.min(p.py,p.y+.016);p.px=p.x-(p.x-p.px)*retain;p.pz=p.z-(p.z-p.pz)*retain;p.contact=true;}
@@ -126,6 +127,11 @@ export class RopeWorld{
             p.x+=px;p.y+=py;p.z+=pz;q.x-=qx;q.y-=qy;q.z-=qz;
             const nx=dx/d,ny=dy/d,nz=dz/d,relativeNormal=(pvx-qvx)*nx+(pvy-qvy)*ny+(pvz-qvz)*nz;
             if(relativeNormal<0){const impulse=-relativeNormal/(wp+wq);pvx+=nx*impulse*wp;pvy+=ny*impulse*wp;pvz+=nz*impulse*wp;qvx-=nx*impulse*wq;qvy-=ny*impulse*wq;qvz-=nz*impulse*wq;}
+            const rvx=pvx-qvx,rvy=pvy-qvy,rvz=pvz-qvz,normalAfter=rvx*nx+rvy*ny+rvz*nz;
+            const tx=rvx-normalAfter*nx,ty=rvy-normalAfter*ny,tz=rvz-normalAfter*nz;
+            const wireFriction=Math.max(0,Math.min(.99,this.params.wireFriction)),friction=1-Math.pow(1-wireFriction,1/(this.collisionPassesThisStep||1)),frictionScale=friction/(wp+wq);
+            pvx-=tx*frictionScale*wp;pvy-=ty*frictionScale*wp;pvz-=tz*frictionScale*wp;
+            qvx+=tx*frictionScale*wq;qvy+=ty*frictionScale*wq;qvz+=tz*frictionScale*wq;
             if(pPin){p.px=p.x;p.py=p.y;p.pz=p.z;}else{p.px=p.x-pvx;p.py=p.y-pvy;p.pz=p.z-pvz;}
             if(qPin){q.px=q.x;q.py=q.y;q.pz=q.z;}else{q.px=q.x-qvx;q.py=q.y-qvy;q.pz=q.z-qvz;}
           }

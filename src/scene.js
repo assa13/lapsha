@@ -19,7 +19,7 @@ export class GameScene{
     const backgroundMap=new THREE.TextureLoader().load('./assets/background.svg');backgroundMap.colorSpace=THREE.SRGBColorSpace;
     const backdrop=new THREE.Mesh(new THREE.PlaneGeometry(WIDTH,HEIGHT),new THREE.MeshBasicMaterial({map:backgroundMap,toneMapped:false}));backdrop.position.z=-4;this.scene.add(backdrop);
     this.materials=Object.fromEntries(MATERIALS.map(m=>[m.id,new THREE.MeshPhysicalMaterial({color:m.color,metalness:m.metalness,roughness:m.roughness,clearcoat:1,clearcoatRoughness:.12,envMapIntensity:1.3,iridescence:m.id==='cosmic'?1:.18,iridescenceIOR:1.35,iridescenceThicknessRange:[120,420]})]));
-    this.electricNoise=this.createElectricNoise();this.experimentalMaterials=new Set();
+    this.electricNoise=this.createElectricNoise();this.experimentalMaterials=new Set();this.wireTextureStyle='default';
     this.play=new THREE.Group();this.shop=new THREE.Group();this.scene.add(this.play,this.shop);this.shop.visible=false;
     this.meshes=new Map();this.angleCache=new Map();this.vials=[];this.mode='game';this.selected=-1;
     this.createShadow();this.createVials();this.createEmbers();
@@ -40,6 +40,34 @@ export class GameScene{
       toneMapped:false
     });
     this.experimentalMaterials.add(material);return material;
+  }
+  createMoltenMaterial(){
+    // Seamless tube-space adaptation of "Molten II" by misol101:
+    // https://www.shadertoy.com/view/DdyGDD
+    const material=new THREE.ShaderMaterial({
+      uniforms:{uTime:{value:0},uBurn:{value:0}},
+      vertexShader:`varying vec2 vUv;varying vec3 vNormal;void main(){vUv=uv;vNormal=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+      fragmentShader:`precision highp float;uniform float uTime;uniform float uBurn;varying vec2 vUv;varying vec3 vNormal;const float TAU=6.2831853;void main(){float a=vUv.y*TAU;vec2 p=vec2(vUv.x*11.+cos(a)*.45,sin(a)*1.7+cos((uTime+5.)*.1)*4.);vec2 r=vec2(0.);float f=1.;for(int i=0;i<24;i++){r+=sin(p*f+uTime*.85)/f;f*=1.17;}float l=length(r);vec3 col=vec3(l*.29,l*l*.024,l*l*l*.0016);col*=.7+.3*abs(vNormal.z);col=mix(col,vec3(1.,.08,.01),uBurn*.78);gl_FragColor=vec4(col,1.);}`,
+      toneMapped:false
+    });
+    this.experimentalMaterials.add(material);return material;
+  }
+  createChromaticMaterial(){
+    // Created by randy read (rcread), 2015; mod of
+    // https://www.shadertoy.com/view/MtjXzc
+    // CC BY-NC-SA 3.0: https://creativecommons.org/licenses/by-nc-sa/3.0/
+    const material=new THREE.ShaderMaterial({
+      uniforms:{uTime:{value:0},uBurn:{value:0}},
+      vertexShader:`varying vec2 vUv;varying vec3 vNormal;void main(){vUv=uv;vNormal=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+      fragmentShader:`precision highp float;uniform float uTime;uniform float uBurn;varying vec2 vUv;varying vec3 vNormal;const float TAU=6.2831853;void main(){float a=vUv.y*TAU;vec2 uv=vec2((vUv.x-.5)*.5+cos(a)*.04-uTime*.1,sin(a)*.175);vec3 c=cos(vec3(uTime*.06,uTime*.045,uTime*.015))*2.+2.;for(int i=0;i<27;i++){vec3 p=vec3(uv*float(i),float(i));c+=abs(vec3(cos(c.y+sin(p.x)),cos(c.z+sin(p.z)),-cos(c.x+sin(p.y))));}vec3 col=(c*.04-.66)*3.;col*=.78+.22*abs(vNormal.z);col=mix(col,vec3(1.,.1,.02),uBurn*.75);gl_FragColor=vec4(col,1.);}`,
+      toneMapped:false
+    });
+    this.experimentalMaterials.add(material);return material;
+  }
+  setWireTexture(style='default'){
+    if(this.wireTextureStyle===style)return;this.wireTextureStyle=style;
+    for(const mesh of this.meshes.values()){this.play.remove(mesh);mesh.geometry.dispose();for(const material of mesh.material){this.experimentalMaterials.delete(material);material.dispose();}}
+    this.meshes.clear();
   }
   createShadow(){
     const c=document.createElement('canvas');c.width=256;c.height=64;const ctx=c.getContext('2d');
@@ -97,7 +125,7 @@ export class GameScene{
     let angles=this.angleCache.get(radial);if(!angles){angles=new Float32Array(radial*2);for(let j=0;j<radial;j++){angles[j*2]=Math.cos(j/radial*Math.PI*2);angles[j*2+1]=Math.sin(j/radial*Math.PI*2);}this.angleCache.set(radial,angles);}
     for(const r of ropes){
       let mesh=this.meshes.get(r.id);const rings=(r.nodes.length-1)*samplesPerLink+1;
-      if(!mesh){const experimental=r.experimentalShader===true||r.sourceIndex===1;mesh=new THREE.Mesh(new THREE.BufferGeometry(),experimental?MATERIALS.map(()=>this.createElectricMaterial()):MATERIALS.map(m=>this.materials[m.id].clone()));mesh.frustumCulled=false;mesh.userData.experimental=experimental;this.meshes.set(r.id,mesh);this.play.add(mesh);}
+      if(!mesh){const style=this.wireTextureStyle,shaderStyle=['electric','molten','chromatic'].includes(style)?style:style==='default'&&(r.experimentalShader===true||r.sourceIndex===1)?'electric':null;const materials=shaderStyle?MATERIALS.map(()=>shaderStyle==='molten'?this.createMoltenMaterial():shaderStyle==='chromatic'?this.createChromaticMaterial():this.createElectricMaterial()):style==='default'?MATERIALS.map(m=>this.materials[m.id].clone()):MATERIALS.map(()=>this.materials[style].clone());mesh=new THREE.Mesh(new THREE.BufferGeometry(),materials);mesh.frustumCulled=false;mesh.userData.experimental=shaderStyle!==null;mesh.userData.shaderStyle=shaderStyle;mesh.userData.textureStyle=style;this.meshes.set(r.id,mesh);this.play.add(mesh);}
       if(mesh.userData.rings!==rings||mesh.userData.radial!==radial){
         mesh.geometry.dispose();const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(rings*radial*3),3));g.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(rings*radial*3),3));const uv=new Float32Array(rings*radial*2);for(let i=0;i<rings;i++)for(let j=0;j<radial;j++){const k=(i*radial+j)*2;uv[k]=i/(rings-1);uv[k+1]=j/radial;}g.setAttribute('uv',new THREE.BufferAttribute(uv,2));
         const indices=[];for(let i=0;i<rings-1;i++)for(let j=0;j<radial;j++){const a=i*radial+j,b=i*radial+(j+1)%radial,c=a+radial,d=b+radial;indices.push(a,b,c,b,d,c);}g.setIndex(indices);mesh.geometry=g;mesh.userData.rings=rings;mesh.userData.radial=radial;
@@ -108,7 +136,7 @@ export class GameScene{
       const samples=mesh.userData.samples??=[];while(samples.length<rings)samples.push(new THREE.Vector3());samples.length=rings;for(let i=0;i<rings;i++)curve.getPoint(i/(rings-1),samples[i]);mesh.userData.samples=samples;
       const pos=mesh.geometry.attributes.position,norm=mesh.geometry.attributes.normal;
       const burn=Math.min(1,r.fade/BURN_DURATION);
-      if(mesh.userData.experimental){for(const mat of mesh.material)mat.uniforms.uBurn.value=burn;}else if(burn>0||mesh.userData.lastBurn>0)for(let i=0;i<mesh.material.length;i++){const mat=mesh.material[i];mat.emissive.setHex(0xff4a05);mat.emissiveIntensity=burn>0?Math.sin(burn*Math.PI)*3:0;mat.color.copy(this.materials[MATERIALS[i].id].color).lerp(BURN_COLOR,burn*.8);}mesh.userData.lastBurn=burn;
+      if(mesh.userData.experimental){for(const mat of mesh.material)mat.uniforms.uBurn.value=burn;}else if(burn>0||mesh.userData.lastBurn>0)for(let i=0;i<mesh.material.length;i++){const mat=mesh.material[i],materialId=mesh.userData.textureStyle==='default'?MATERIALS[i].id:mesh.userData.textureStyle;mat.emissive.setHex(0xff4a05);mat.emissiveIntensity=burn>0?Math.sin(burn*Math.PI)*3:0;mat.color.copy(this.materials[materialId].color).lerp(BURN_COLOR,burn*.8);}mesh.userData.lastBurn=burn;
       if(burn>0){for(let i=0;i<r.nodes.length&&emberCount<1800;i+=2){const p=r.nodes[i],phase=(burn+(i*.173)%1)%1;emberPositions.setXYZ(emberCount++,p.x+Math.sin(i*2.4+burn*6)*phase*.25,p.y+phase*.85,p.z+.08);}}
       const tangent=mesh.userData.tangent??new THREE.Vector3(),side=mesh.userData.side??new THREE.Vector3(),normal=mesh.userData.normal??new THREE.Vector3();mesh.userData.tangent=tangent;mesh.userData.side=side;mesh.userData.normal=normal;
       for(let i=0;i<rings;i++){
