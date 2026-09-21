@@ -121,11 +121,11 @@ export class GameScene{
     let emberCount=0;const emberPositions=this.embers.geometry.attributes.position;
     const ids=new Set(ropes.map(r=>r.id));for(const [id,mesh]of this.meshes){if(!ids.has(id)){this.play.remove(mesh);mesh.geometry.dispose();for(const mat of mesh.material){this.experimentalMaterials.delete(mat);mat.dispose();}this.meshes.delete(id);}}
     const nodeCount=ropes.reduce((n,r)=>n+r.nodes.length,0);
-    const samplesPerLink=nodeCount>4000?1:nodeCount>1800?2:3,radial=nodeCount>4000?5:nodeCount>1800?6:8;
+    const samplesPerLink=nodeCount>4000?1:nodeCount>1800?2:3,radial=nodeCount>4000?4:nodeCount>1800?5:6;
     let angles=this.angleCache.get(radial);if(!angles){angles=new Float32Array(radial*2);for(let j=0;j<radial;j++){angles[j*2]=Math.cos(j/radial*Math.PI*2);angles[j*2+1]=Math.sin(j/radial*Math.PI*2);}this.angleCache.set(radial,angles);}
     for(const r of ropes){
       let mesh=this.meshes.get(r.id);const rings=(r.nodes.length-1)*samplesPerLink+1;
-      if(!mesh){const style=this.wireTextureStyle,shaderStyle=['electric','molten','chromatic'].includes(style)?style:style==='default'&&(r.experimentalShader===true||r.sourceIndex===1)?'electric':null;const materials=shaderStyle?MATERIALS.map(()=>shaderStyle==='molten'?this.createMoltenMaterial():shaderStyle==='chromatic'?this.createChromaticMaterial():this.createElectricMaterial()):style==='default'?MATERIALS.map(m=>this.materials[m.id].clone()):MATERIALS.map(()=>this.materials[style].clone());mesh=new THREE.Mesh(new THREE.BufferGeometry(),materials);mesh.frustumCulled=false;mesh.userData.experimental=shaderStyle!==null;mesh.userData.shaderStyle=shaderStyle;mesh.userData.textureStyle=style;this.meshes.set(r.id,mesh);this.play.add(mesh);}
+      if(!mesh){const style=this.wireTextureStyle,shaderStyle=['electric','molten','chromatic'].includes(style)?style:style==='default'&&(r.experimentalShader===true||r.sourceIndex===1)?'electric':null;const materials=shaderStyle?MATERIALS.map(()=>shaderStyle==='molten'?this.createMoltenMaterial():shaderStyle==='chromatic'?this.createChromaticMaterial():this.createElectricMaterial()):style==='default'?MATERIALS.map(m=>this.materials[m.id].clone()):MATERIALS.map(()=>this.materials[style].clone());mesh=new THREE.Mesh(new THREE.BufferGeometry(),materials);mesh.frustumCulled=false;mesh.userData.experimental=shaderStyle!==null;mesh.userData.shaderStyle=shaderStyle;mesh.userData.textureStyle=style;mesh.userData.timeOffset=((r.id*.61803398875)%1)*30;if(shaderStyle)for(const material of materials)material.userData.timeOffset=mesh.userData.timeOffset;this.meshes.set(r.id,mesh);this.play.add(mesh);}
       if(mesh.userData.rings!==rings||mesh.userData.radial!==radial){
         mesh.geometry.dispose();const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(rings*radial*3),3));g.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(rings*radial*3),3));const uv=new Float32Array(rings*radial*2);for(let i=0;i<rings;i++)for(let j=0;j<radial;j++){const k=(i*radial+j)*2;uv[k]=i/(rings-1);uv[k+1]=j/radial;}g.setAttribute('uv',new THREE.BufferAttribute(uv,2));
         const indices=[];for(let i=0;i<rings-1;i++)for(let j=0;j<radial;j++){const a=i*radial+j,b=i*radial+(j+1)%radial,c=a+radial,d=b+radial;indices.push(a,b,c,b,d,c);}g.setIndex(indices);mesh.geometry=g;mesh.userData.rings=rings;mesh.userData.radial=radial;
@@ -153,7 +153,7 @@ export class GameScene{
   }
   render(time,ropes){
     this.rim.position.x=3+Math.sin(time*.65)*2;
-    for(const material of this.experimentalMaterials)material.uniforms.uTime.value=time;
+    for(const material of this.experimentalMaterials)material.uniforms.uTime.value=time+(material.userData.timeOffset||0);
     if(this.mode==='game')this.syncRopes(ropes);
     else for(let i=0;i<this.vials.length;i++){const v=this.vials[i];v.rotation.y=Math.sin(time*.7+i)*.2;if(this.mode==='detail'&&i===this.selected)v.rotation.y=time*.22;}
     const cosmic=this.materials.cosmic;cosmic.iridescenceThicknessRange=[150+Math.sin(time)*50,420+Math.sin(time*.5)*70];

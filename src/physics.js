@@ -3,11 +3,14 @@
 export const STEP=1/120, SEGMENT=.14, RADIUS=.066, FLOOR=-3.88, TOP=6.75;
 export const BURN_DELAY=3, BURN_DURATION=.8;
 export const PILE_STOP_Y=TOP-1, PILE_RESUME_Y=TOP-1.6, PILE_STOP_DELAY=.35, PILE_RESUME_DELAY=.6;
-export const PHYSICS_DEFAULTS=Object.freeze({fixedStep:STEP,maxStepsPerFrame:4,segmentLength:SEGMENT,radius:RADIUS,floor:FLOOR,top:TOP,gravity:14,horizontalDamping:.998,depthDamping:.993,turbulence:.04,anchorFrequency:.65,anchorSway:.08,anchorFollow:5,bendRatio:.94,bendStiffness:.16,floorFriction:.025,wireFriction:.12,wallHalfWidth:2.84,depthHalfWidth:.29,solverPasses:10,denseSolverPasses:6,denseThreshold:800,pileStopY:PILE_STOP_Y,pileResumeY:PILE_RESUME_Y,pileStopDelay:PILE_STOP_DELAY,pileResumeDelay:PILE_RESUME_DELAY,burnDelay:BURN_DELAY,burnDuration:BURN_DURATION});
+export const PHYSICS_DEFAULTS=Object.freeze({fixedStep:STEP,maxStepsPerFrame:4,segmentLength:SEGMENT,radius:RADIUS,floor:FLOOR,top:TOP,gravity:14,horizontalDamping:.998,depthDamping:.993,turbulence:.04,anchorFrequency:.65,anchorSway:.08,anchorFollow:5,bendRatio:.94,bendStiffness:.16,floorFriction:.025,wireFriction:.12,pileMassBoost:5,pileVelocityDamping:.1,pilePressureDamping:.78,tailBakeStartNodes:80,tailBakeMinNodes:8,tailBakeDelay:.75,tailBakeSpeed:.006,tailBakeHeight:2.4,wallHalfWidth:2.84,depthHalfWidth:.29,solverPasses:10,denseSolverPasses:6,denseThreshold:800,pileStopY:PILE_STOP_Y,pileResumeY:PILE_RESUME_Y,pileStopDelay:PILE_STOP_DELAY,pileResumeDelay:PILE_RESUME_DELAY,burnDelay:BURN_DELAY,burnDuration:BURN_DURATION});
 export const PHYSICS_PARAMETERS=PHYSICS_DEFAULTS;
 const node=(x,y,z=0)=>({x,y,z,px:x,py:y,pz:z});
 const clone=p=>({...p});
-const NEIGHBORS=[];for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++)for(let z=-1;z<=1;z++)NEIGHBORS.push(x+y*128+z*16384);
+// Process every neighboring cell pair once. Contacts inside the same cell are
+// handled separately, so only one ordered half of the 3×3×3 neighborhood is
+// needed instead of 27 hash lookups for every node.
+const FORWARD_NEIGHBORS=[];for(let z=-1;z<=1;z++)for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++)if(z>0||(z===0&&y>0)||(z===0&&y===0&&x>0))FORWARD_NEIGHBORS.push(x+y*128+z*16384);
 let nextId=1;
 export function intersection(a,b,c,d){
   const rx=b.x-a.x,ry=b.y-a.y,sx=d.x-c.x,sy=d.y-c.y;
@@ -21,7 +24,7 @@ export class RopeWorld{
     this.params={...PHYSICS_DEFAULTS};this.setParameters(parameters);
     this.ropes=[];this.time=0;this.onBurn=onBurn;this.feedSpeed=1.15;this.material='gold';this.rotation=[...materials];this.rotationIndex=0;
     this.extrusionBlocked=false;this.pileHeight=this.params.floor;this.pileStopTime=0;this.pileResumeTime=0;
-    this.collisionGrid=new Map();this.collisionBuckets=[];this.collisionEntries=[];
+    this.collisionGrid=new Map();this.collisionBuckets=[];this.collisionKeys=[];this.collisionEntries=[];
     this.setWireCount(wireCount,materials.length?6.5:.3,true);
   }
   setParameters(values={}){for(const key of Object.keys(PHYSICS_DEFAULTS))if(Number.isFinite(values[key]))this.params[key]=values[key];}
@@ -54,9 +57,10 @@ export class RopeWorld{
         feeder.linkMaterials.unshift(feeder.emitMaterial||this.rotation[0]);
       }
     }
-    for(const r of this.ropes){r.supported=false;r.age+=dt;for(const p of r.nodes)p.contact=false;if(r.landed){r.restTime+=dt;r.fade=Math.max(0,r.restTime-this.params.burnDelay);}if(r.fade>0)continue;
+    for(const r of this.ropes){r.supported=false;r.age+=dt;for(const p of r.nodes){p.contact=false;p.contactCount=0;}if(r.landed){r.restTime+=dt;r.fade=Math.max(0,r.restTime-this.params.burnDelay);}if(r.fade>0)continue;
       for(let i=0;i<r.nodes.length;i++){
         const p=r.nodes[i];if(r.attached&&i===0){const target=r.anchorX+Math.sin(this.time*this.params.anchorFrequency+r.anchorX)*this.params.anchorSway;p.x+=(target-p.x)*Math.min(1,dt*this.params.anchorFollow);p.y=top;p.z+=(r.anchorZ-p.z)*Math.min(1,dt*this.params.anchorFollow);p.px=p.x;p.py=p.y;p.pz=p.z;continue;}
+        if(p.frozen){p.px=p.x;p.py=p.y;p.pz=p.z;continue;}
         const vx=(p.x-p.px)*this.params.horizontalDamping,vy=(p.y-p.py)*this.params.horizontalDamping,vz=(p.z-p.pz)*this.params.depthDamping;
         p.px=p.x;p.py=p.y;p.pz=p.z;
         p.x+=vx+Math.sin(this.time*1.1+p.y*1.4)*this.params.turbulence*dt*dt;
@@ -72,17 +76,20 @@ export class RopeWorld{
         // allowing the wire to coil naturally on contact with the floor.
         for(let i=0;i<r.nodes.length-2;i++){
           const a=r.nodes[i],b=r.nodes[i+2],minimum=(r.links[i]+r.links[i+1])*this.params.bendRatio;
+          if(a.frozen&&b.frozen)continue;
           if(Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z)<minimum)this.constrain(a,b,minimum,r.attached&&i===0,this.params.bendStiffness);
         }
       }
       if(pass===passes-1||pass%2===0)this.collide();
       for(const r of this.ropes){if(r.fade>0)continue;for(let i=0;i<r.nodes.length;i++){
         const p=r.nodes[i];if(r.attached&&i===0)continue;
-        if(p.y<floor+radius){const retain=1-this.params.floorFriction;p.y=floor+radius;p.py=Math.min(p.py,p.y+.016);p.px=p.x-(p.x-p.px)*retain;p.pz=p.z-(p.z-p.pz)*retain;p.contact=true;}
+        if(p.y<floor+radius){const retain=1-this.params.floorFriction;p.y=floor+radius;p.py=Math.min(p.py,p.y+.016);p.px=p.x-(p.x-p.px)*retain;p.pz=p.z-(p.z-p.pz)*retain;p.contact=true;p.contactCount++;}
         p.x=Math.max(-this.params.wallHalfWidth+radius,Math.min(this.params.wallHalfWidth-radius,p.x));
         p.z=Math.max(-this.params.depthHalfWidth,Math.min(this.params.depthHalfWidth,p.z));
       }}
     }
+    this.stabilizePileVelocities();
+    this.updateFrozenTails(dt);
     for(const r of this.ropes){
       if(!r.attached&&!r.landed&&r.age>.13&&(r.supported||r.nodes.some(p=>p.y<=floor+radius+.025))){
         r.landed=true;r.restTime=0;
@@ -93,10 +100,11 @@ export class RopeWorld{
     this.ropes=this.ropes.filter(r=>!r.burned);
   }
   constrain(a,b,rest,pinned,stiffness){
+    const aPinned=pinned||a.frozen===true,bPinned=b.frozen===true;if(aPinned&&bPinned)return;
     const dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z;const len=Math.hypot(dx,dy,dz)||.0001;
-    const f=(len-rest)/len*stiffness;const k=pinned?0:.5;
-    a.x+=dx*f*k;a.y+=dy*f*k;a.z+=dz*f*k;
-    b.x-=dx*f*(1-k);b.y-=dy*f*(1-k);b.z-=dz*f*(1-k);
+    const f=(len-rest)/len*stiffness,wa=aPinned?0:bPinned?1:.5,wb=bPinned?0:aPinned?1:.5;
+    a.x+=dx*f*wa;a.y+=dy*f*wa;a.z+=dz*f*wa;
+    b.x-=dx*f*wb;b.y-=dy*f*wb;b.z-=dz*f*wb;
   }
   isFeederSpine(r,i){
     if(!r.attached||i===0)return r.attached&&i===0;
@@ -104,42 +112,84 @@ export class RopeWorld{
     const a=r.nodes[Math.max(0,i-1)],b=r.nodes[Math.min(r.nodes.length-1,i+1)];
     return Math.hypot(b.x-a.x,b.z-a.z)<Math.abs(b.y-a.y)*.45;
   }
+  collisionInverseMass(r,i,p){
+    if(p.frozen||r.attached&&i===0)return 0;
+    const zone=Math.min(2.4,Math.max(.1,this.params.pileStopY-this.params.floor));
+    const depth=Math.max(0,Math.min(1,(this.params.floor+zone-p.y)/zone));
+    const tail=r.attached?i/Math.max(1,r.nodes.length-1):1;
+    return 1/(1+this.params.pileMassBoost*depth*tail);
+  }
+  stabilizePileVelocities(){
+    const zone=Math.min(2.4,Math.max(.1,this.params.pileStopY-this.params.floor));
+    for(const r of this.ropes){if(r.fade>0)continue;const last=Math.max(1,r.nodes.length-1);
+      for(let i=0;i<r.nodes.length;i++){const p=r.nodes[i],contacts=p.contactCount||0;if(p.frozen||!contacts)continue;
+        const depth=Math.max(0,Math.min(1,(this.params.floor+zone-p.y)/zone));if(depth<=0)continue;
+        const tail=r.attached?i/last:1,pressure=1-Math.exp(-contacts*.18);
+        const damping=Math.min(.96,(this.params.pileVelocityDamping+pressure*this.params.pilePressureDamping)*depth*(.25+.75*tail));
+        const horizontalRetain=1-damping,verticalRetain=1-Math.min(.985,damping*1.15);
+        p.px=p.x-(p.x-p.px)*horizontalRetain;p.py=p.y-(p.y-p.py)*verticalRetain;p.pz=p.z-(p.z-p.pz)*horizontalRetain;
+      }
+    }
+  }
+  updateFrozenTails(dt){
+    const {floor,tailBakeStartNodes,tailBakeMinNodes,tailBakeDelay,tailBakeSpeed,tailBakeHeight}=this.params,speed2=tailBakeSpeed*tailBakeSpeed,maxY=floor+tailBakeHeight;
+    for(const r of this.ropes){if(!r.attached||r.nodes.length<tailBakeStartNodes||r.fade>0)continue;
+      for(let i=1;i<r.nodes.length;i++){const p=r.nodes[i];if(p.frozen)continue;
+        const vx=p.x-p.px,vy=p.y-p.py,vz=p.z-p.pz;
+        p.settleTime=p.contact&&p.y<=maxY&&vx*vx+vy*vy+vz*vz<=speed2?(p.settleTime||0)+dt:0;
+      }
+      let start=r.nodes.length;for(let i=r.nodes.length-1;i>=2;i--){const p=r.nodes[i];if(p.frozen||p.settleTime>=tailBakeDelay)start=i;else break;}
+      if(r.nodes.length-start<tailBakeMinNodes)continue;
+      for(let i=start+1;i<r.nodes.length;i++){const p=r.nodes[i];p.frozen=true;p.px=p.x;p.py=p.y;p.pz=p.z;}
+    }
+  }
+  thawRope(r){
+    for(const p of r.nodes){if(p.frozen){p.frozen=false;p.px=p.x;p.py=p.y;p.pz=p.z;}p.settleTime=0;}
+  }
   collide(){
-    const size=this.params.radius*2,grid=this.collisionGrid;grid.clear();let bucketCount=0,entryCount=0;
+    const size=this.params.radius*2,size2=size*size,grid=this.collisionGrid;grid.clear();let bucketCount=0,entryCount=0;
     for(const r of this.ropes){if(r.fade>0)continue;
       for(let i=0;i<r.nodes.length;i++){
         const p=r.nodes[i],gx=Math.floor(p.x/size),gy=Math.floor(p.y/size),gz=Math.floor(p.z/size),key=(gx+64)+(gy+64)*128+(gz+16)*16384;
-        for(const offset of NEIGHBORS){
-          const bucket=grid.get(key+offset);if(!bucket)continue;
-          for(const entry of bucket){if(entry.r===r&&Math.abs(entry.i-i)<3)continue;
-            const q=entry.p;let dx=p.x-q.x,dy=p.y-q.y,dz=p.z-q.z,d2=dx*dx+dy*dy+dz*dz;
-            if(d2>=size*size)continue;let d=Math.sqrt(d2);if(d<.00001){dx=.0001;dz=.0001;d=Math.sqrt(dx*dx+dz*dz);}
-            if(this.isFeederSpine(r,i)&&this.isFeederSpine(entry.r,entry.i))continue;
-            p.contact=true;q.contact=true;
-            if(entry.r!==r){
-              if((entry.r.landed||q.y<=this.params.floor+this.params.radius+.025)&&p.y>=q.y-this.params.radius)r.supported=true;
-              if((r.landed||p.y<=this.params.floor+this.params.radius+.025)&&q.y>=p.y-this.params.radius)entry.r.supported=true;
-            }
-            const pPin=r.attached&&i===0,qPin=entry.r.attached&&entry.i===0;if(pPin&&qPin)continue;
-            let pvx=p.x-p.px,pvy=p.y-p.py,pvz=p.z-p.pz,qvx=q.x-q.px,qvy=q.y-q.py,qvz=q.z-q.pz;
-            const f=(size-d)/d,wp=pPin?0:qPin?1:.5,wq=qPin?0:pPin?1:.5;
-            const px=dx*f*wp,py=dy*f*wp,pz=dz*f*wp,qx=dx*f*wq,qy=dy*f*wq,qz=dz*f*wq;
-            p.x+=px;p.y+=py;p.z+=pz;q.x-=qx;q.y-=qy;q.z-=qz;
-            const nx=dx/d,ny=dy/d,nz=dz/d,relativeNormal=(pvx-qvx)*nx+(pvy-qvy)*ny+(pvz-qvz)*nz;
-            if(relativeNormal<0){const impulse=-relativeNormal/(wp+wq);pvx+=nx*impulse*wp;pvy+=ny*impulse*wp;pvz+=nz*impulse*wp;qvx-=nx*impulse*wq;qvy-=ny*impulse*wq;qvz-=nz*impulse*wq;}
-            const rvx=pvx-qvx,rvy=pvy-qvy,rvz=pvz-qvz,normalAfter=rvx*nx+rvy*ny+rvz*nz;
-            const tx=rvx-normalAfter*nx,ty=rvy-normalAfter*ny,tz=rvz-normalAfter*nz;
-            const wireFriction=Math.max(0,Math.min(.99,this.params.wireFriction)),friction=1-Math.pow(1-wireFriction,1/(this.collisionPassesThisStep||1)),frictionScale=friction/(wp+wq);
-            pvx-=tx*frictionScale*wp;pvy-=ty*frictionScale*wp;pvz-=tz*frictionScale*wp;
-            qvx+=tx*frictionScale*wq;qvy+=ty*frictionScale*wq;qvz+=tz*frictionScale*wq;
-            if(pPin){p.px=p.x;p.py=p.y;p.pz=p.z;}else{p.px=p.x-pvx;p.py=p.y-pvy;p.pz=p.z-pvz;}
-            if(qPin){q.px=q.x;q.py=q.y;q.pz=q.z;}else{q.px=q.x-qvx;q.py=q.y-qvy;q.pz=q.z-qvz;}
-          }
-        }
-        let bucket=grid.get(key);if(!bucket){bucket=this.collisionBuckets[bucketCount]??[];this.collisionBuckets[bucketCount++]=bucket;bucket.length=0;grid.set(key,bucket);}
-        const entry=this.collisionEntries[entryCount]??{};this.collisionEntries[entryCount++]=entry;entry.p=p;entry.r=r;entry.i=i;bucket.push(entry);
+        let bucket=grid.get(key);if(!bucket){bucket=this.collisionBuckets[bucketCount]??[];this.collisionBuckets[bucketCount]=bucket;this.collisionKeys[bucketCount++]=key;bucket.length=0;grid.set(key,bucket);}
+        const entry=this.collisionEntries[entryCount]??{};this.collisionEntries[entryCount++]=entry;entry.p=p;entry.r=r;entry.i=i;entry.spine=undefined;entry.invMass=this.collisionInverseMass(r,i,p);bucket.push(entry);
       }
     }
+    for(let b=0;b<bucketCount;b++){
+      const bucket=this.collisionBuckets[b];
+      for(let i=0;i<bucket.length;i++)for(let j=i+1;j<bucket.length;j++)this.resolveCollision(bucket[i],bucket[j],size,size2);
+      const key=this.collisionKeys[b];
+      for(const offset of FORWARD_NEIGHBORS){const neighbor=grid.get(key+offset);if(!neighbor)continue;
+        for(const a of bucket)for(const other of neighbor)this.resolveCollision(a,other,size,size2);
+      }
+    }
+  }
+  resolveCollision(entry,other,size,size2){
+    const p=entry.p,q=other.p,r=entry.r,s=other.r,i=entry.i,j=other.i;
+    if(r===s&&Math.abs(i-j)<3)return;
+    let dx=p.x-q.x,dy=p.y-q.y,dz=p.z-q.z,d2=dx*dx+dy*dy+dz*dz;
+    if(d2>=size2)return;let d=Math.sqrt(d2);if(d<.00001){dx=.0001;dz=.0001;d=Math.sqrt(dx*dx+dz*dz);}
+    entry.spine??=this.isFeederSpine(r,i);other.spine??=this.isFeederSpine(s,j);if(entry.spine&&other.spine)return;
+    p.contact=true;q.contact=true;p.contactCount=(p.contactCount||0)+1;q.contactCount=(q.contactCount||0)+1;
+    if(s!==r){
+      if((s.landed||q.y<=this.params.floor+this.params.radius+.025)&&p.y>=q.y-this.params.radius)r.supported=true;
+      if((r.landed||p.y<=this.params.floor+this.params.radius+.025)&&q.y>=p.y-this.params.radius)s.supported=true;
+    }
+    const pPin=r.attached&&i===0,qPin=s.attached&&j===0;if(pPin&&qPin)return;
+    if(entry.invMass+other.invMass<=0)return;
+    let pvx=p.x-p.px,pvy=p.y-p.py,pvz=p.z-p.pz,qvx=q.x-q.px,qvy=q.y-q.py,qvz=q.z-q.pz;
+    const inverseMass=entry.invMass+other.invMass,f=(size-d)/d,wp=entry.invMass/inverseMass,wq=other.invMass/inverseMass;
+    const px=dx*f*wp,py=dy*f*wp,pz=dz*f*wp,qx=dx*f*wq,qy=dy*f*wq,qz=dz*f*wq;
+    p.x+=px;p.y+=py;p.z+=pz;q.x-=qx;q.y-=qy;q.z-=qz;
+    const nx=dx/d,ny=dy/d,nz=dz/d,relativeNormal=(pvx-qvx)*nx+(pvy-qvy)*ny+(pvz-qvz)*nz;
+    if(relativeNormal<0){const impulse=-relativeNormal/(wp+wq);pvx+=nx*impulse*wp;pvy+=ny*impulse*wp;pvz+=nz*impulse*wp;qvx-=nx*impulse*wq;qvy-=ny*impulse*wq;qvz-=nz*impulse*wq;}
+    const rvx=pvx-qvx,rvy=pvy-qvy,rvz=pvz-qvz,normalAfter=rvx*nx+rvy*ny+rvz*nz;
+    const tx=rvx-normalAfter*nx,ty=rvy-normalAfter*ny,tz=rvz-normalAfter*nz;
+    const wireFriction=Math.max(0,Math.min(.99,this.params.wireFriction)),friction=1-Math.pow(1-wireFriction,1/(this.collisionPassesThisStep||1)),frictionScale=friction/(wp+wq);
+    pvx-=tx*frictionScale*wp;pvy-=ty*frictionScale*wp;pvz-=tz*frictionScale*wp;
+    qvx+=tx*frictionScale*wq;qvy+=ty*frictionScale*wq;qvz+=tz*frictionScale*wq;
+    if(pPin){p.px=p.x;p.py=p.y;p.pz=p.z;}else{p.px=p.x-pvx;p.py=p.y-pvy;p.pz=p.z-pvz;}
+    if(qPin){q.px=q.x;q.py=q.y;q.pz=q.z;}else{q.px=q.x-qvx;q.py=q.y-qvy;q.pz=q.z-qvz;}
   }
   measurePileHeight(){
     let peak=this.params.floor;
@@ -184,6 +234,7 @@ export class RopeWorld{
         r.nodes=[...r.nodes.slice(0,i+1),clone(c)];r.links=[...r.links.slice(0,i),link*u];r.linkMaterials=r.linkMaterials.slice(0,i+1);
         // Small visible separation; income is granted only when the fragment burns.
         tail.nodes[0].py+=.012;r.nodes.at(-1).py-=.009;
+        this.thawRope(tail);this.thawRope(r);
         this.ropes.push(tail);hits.push({x:c.x,y:c.y,z:c.z});
       }
       if(found.length&&r.attached)r.emitMaterial=this.nextMaterial();
