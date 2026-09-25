@@ -19,16 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
-
----
-
-Chromatic plasma shader
-
-Created by randy read (rcread), 2015.
-Modification of https://www.shadertoy.com/view/MtjXzc
-
-Licensed under the Creative Commons
-Attribution-NonCommercial-ShareAlike 3.0 Unported License:
-https://creativecommons.org/licenses/by-nc-sa/3.0/
-
-The game contains a modified, seamless tube-space adaptation of the shader.

@@ -1,16 +1,26 @@
 // Fixed-step, position-based rope solver. Distances are owned by links so a
 // swipe can split a link at the actual hit point without creating more rope.
-export const STEP=1/120, SEGMENT=.14, RADIUS=.066, FLOOR=-3.88, TOP=6.75;
+export const STEP=1/120, SEGMENT=.14, RADIUS=.08712, FLOOR=-3.88, TOP=6.75;
 export const BURN_DELAY=3, BURN_DURATION=.8;
 export const PILE_STOP_Y=TOP-1, PILE_RESUME_Y=TOP-1.6, PILE_STOP_DELAY=.35, PILE_RESUME_DELAY=.6;
-export const PHYSICS_DEFAULTS=Object.freeze({fixedStep:STEP,maxStepsPerFrame:4,segmentLength:SEGMENT,radius:RADIUS,floor:FLOOR,top:TOP,gravity:14,horizontalDamping:.998,depthDamping:.993,turbulence:.04,anchorFrequency:.65,anchorSway:.08,anchorFollow:5,bendRatio:.94,bendStiffness:.16,floorFriction:.025,wireFriction:.12,pileMassBoost:5,pileVelocityDamping:.1,pilePressureDamping:.78,tailBakeStartNodes:80,tailBakeMinNodes:8,tailBakeDelay:.75,tailBakeSpeed:.006,tailBakeHeight:2.4,wallHalfWidth:2.84,depthHalfWidth:.29,solverPasses:10,denseSolverPasses:6,denseThreshold:800,pileStopY:PILE_STOP_Y,pileResumeY:PILE_RESUME_Y,pileStopDelay:PILE_STOP_DELAY,pileResumeDelay:PILE_RESUME_DELAY,burnDelay:BURN_DELAY,burnDuration:BURN_DURATION});
+export const PHYSICS_DEFAULTS=Object.freeze({fixedStep:STEP,maxStepsPerFrame:4,segmentLength:SEGMENT,radius:RADIUS,floor:FLOOR,top:TOP,gravity:14,horizontalDamping:.998,depthDamping:.993,turbulence:.04,anchorFrequency:.65,anchorSway:.08,anchorFollow:5,bendRatio:.94,bendStiffness:.16,floorFriction:.025,wireFriction:.12,pileMassBoost:5,pileVelocityDamping:.1,pilePressureDamping:.78,tailBakeStartNodes:80,tailBakeMinNodes:8,tailBakeDelay:.75,tailBakeSpeed:.006,tailBakeHeight:2.4,wallHalfWidth:2.84,depthHalfWidth:.2175,solverPasses:10,denseSolverPasses:6,denseThreshold:800,pileStopY:PILE_STOP_Y,pileResumeY:PILE_RESUME_Y,pileStopDelay:PILE_STOP_DELAY,pileResumeDelay:PILE_RESUME_DELAY,burnDelay:BURN_DELAY,burnDuration:BURN_DURATION});
 export const PHYSICS_PARAMETERS=PHYSICS_DEFAULTS;
 const node=(x,y,z=0)=>({x,y,z,px:x,py:y,pz:z});
 const clone=p=>({...p});
 // Process every neighboring cell pair once. Contacts inside the same cell are
 // handled separately, so only one ordered half of the 3×3×3 neighborhood is
 // needed instead of 27 hash lookups for every node.
-const FORWARD_NEIGHBORS=[];for(let z=-1;z<=1;z++)for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++)if(z>0||(z===0&&y>0)||(z===0&&y===0&&x>0))FORWARD_NEIGHBORS.push(x+y*128+z*16384);
+const FORWARD_NEIGHBORS=[];for(let z=-1;z<=1;z++)for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++)if(z>0||(z===0&&y>0)||(z===0&&y===0&&x>0))FORWARD_NEIGHBORS.push([x,y,z]);
+const FLAT_NEIGHBORS=[[1,0,0],[-1,1,0],[0,1,0],[1,1,0]];
+// The normal playfield fits in a small, reusable dense grid. Extreme radius or
+// wall settings fall back to a sparse grid instead of allocating huge buffers.
+const MAX_GRID_CELLS=1<<20;
+class CollisionEntry{
+  constructor(){
+    this.p=null;this.r=null;this.i=0;this.spine=undefined;this.invMass=0;
+    this.gx=0;this.gy=0;this.gz=0;
+  }
+}
 let nextId=1;
 export function intersection(a,b,c,d){
   const rx=b.x-a.x,ry=b.y-a.y,sx=d.x-c.x,sy=d.y-c.y;
@@ -20,12 +30,13 @@ export function intersection(a,b,c,d){
   return t>=0&&t<=1&&u>=0&&u<=1?{t,u}:null;
 }
 export class RopeWorld{
-  constructor({onBurn=()=>{},materials=['gold'],wireCount=1,parameters={}}={}){
+  constructor({onBurn=()=>{},materials=['gold'],wireCount=1,parameters={},initialLength=6.5}={}){
     this.params={...PHYSICS_DEFAULTS};this.setParameters(parameters);
     this.ropes=[];this.time=0;this.onBurn=onBurn;this.feedSpeed=1.15;this.material='gold';this.rotation=[...materials];this.rotationIndex=0;
     this.extrusionBlocked=false;this.pileHeight=this.params.floor;this.pileStopTime=0;this.pileResumeTime=0;
-    this.collisionGrid=new Map();this.collisionBuckets=[];this.collisionKeys=[];this.collisionEntries=[];
-    this.setWireCount(wireCount,materials.length?6.5:.3,true);
+    this.collisionGrid=new Map();this.collisionBuckets=[];this.collisionKeys=[];this.collisionEntries=[];this.collisionActiveCount=0;
+    this.collisionCells=new Int32Array(0);this.collisionOffsets=new Int32Array(13);
+    this.setWireCount(wireCount,materials.length?initialLength:.3,true);
   }
   setParameters(values={}){for(const key of Object.keys(PHYSICS_DEFAULTS))if(Number.isFinite(values[key]))this.params[key]=values[key];}
   addFeeder(material,length=6.5,anchorX=0,anchorZ=0){
@@ -57,7 +68,7 @@ export class RopeWorld{
         feeder.linkMaterials.unshift(feeder.emitMaterial||this.rotation[0]);
       }
     }
-    for(const r of this.ropes){r.supported=false;r.age+=dt;for(const p of r.nodes){p.contact=false;p.contactCount=0;}if(r.landed){r.restTime+=dt;r.fade=Math.max(0,r.restTime-this.params.burnDelay);}if(r.fade>0)continue;
+    for(const r of this.ropes){r.supported=false;r.age+=dt;for(const p of r.nodes){if(!p.frozen)p.contact=false;p.contactCount=0;}if(r.landed){r.restTime+=dt;r.fade=Math.max(0,r.restTime-this.params.burnDelay);}if(r.fade>0)continue;
       for(let i=0;i<r.nodes.length;i++){
         const p=r.nodes[i];if(r.attached&&i===0){const target=r.anchorX+Math.sin(this.time*this.params.anchorFrequency+r.anchorX)*this.params.anchorSway;p.x+=(target-p.x)*Math.min(1,dt*this.params.anchorFollow);p.y=top;p.z+=(r.anchorZ-p.z)*Math.min(1,dt*this.params.anchorFollow);p.px=p.x;p.py=p.y;p.pz=p.z;continue;}
         if(p.frozen){p.px=p.x;p.py=p.y;p.pz=p.z;continue;}
@@ -77,7 +88,8 @@ export class RopeWorld{
         for(let i=0;i<r.nodes.length-2;i++){
           const a=r.nodes[i],b=r.nodes[i+2],minimum=(r.links[i]+r.links[i+1])*this.params.bendRatio;
           if(a.frozen&&b.frozen)continue;
-          if(Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z)<minimum)this.constrain(a,b,minimum,r.attached&&i===0,this.params.bendStiffness);
+          const dx=a.x-b.x,dy=a.y-b.y,dz=a.z-b.z;
+          if(dx*dx+dy*dy+dz*dz<minimum*minimum)this.constrain(a,b,minimum,r.attached&&i===0,this.params.bendStiffness);
         }
       }
       if(pass===passes-1||pass%2===0)this.collide();
@@ -101,7 +113,7 @@ export class RopeWorld{
   }
   constrain(a,b,rest,pinned,stiffness){
     const aPinned=pinned||a.frozen===true,bPinned=b.frozen===true;if(aPinned&&bPinned)return;
-    const dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z;const len=Math.hypot(dx,dy,dz)||.0001;
+    const dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z;const len=Math.sqrt(dx*dx+dy*dy+dz*dz)||.0001;
     const f=(len-rest)/len*stiffness,wa=aPinned?0:bPinned?1:.5,wb=bPinned?0:aPinned?1:.5;
     a.x+=dx*f*wa;a.y+=dy*f*wa;a.z+=dz*f*wa;
     b.x-=dx*f*wb;b.y-=dy*f*wb;b.z-=dz*f*wb;
@@ -147,28 +159,63 @@ export class RopeWorld{
     for(const p of r.nodes){if(p.frozen){p.frozen=false;p.px=p.x;p.py=p.y;p.pz=p.z;}p.settleTime=0;}
   }
   collide(){
-    const size=this.params.radius*2,size2=size*size,grid=this.collisionGrid;grid.clear();let bucketCount=0,entryCount=0;
+    // The friction coefficient is constant throughout a collision pass.
+    this.contactFriction=1-Math.pow(1-Math.max(0,Math.min(.99,this.params.wireFriction)),1/(this.collisionPassesThisStep||1));
+    const size=this.params.radius*2,size2=size*size,grid=this.collisionGrid,entries=this.collisionEntries,buckets=this.collisionBuckets;
+    // The playfield is shallow. Project its broad phase onto XY; the narrow
+    // phase still checks true 3D distances. Deep custom arenas use the 3D grid.
+    const shallow=this.params.depthHalfWidth<=size*3;
+    let bucketCount=0,entryCount=0,minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
     for(const r of this.ropes){if(r.fade>0)continue;
       for(let i=0;i<r.nodes.length;i++){
-        const p=r.nodes[i],gx=Math.floor(p.x/size),gy=Math.floor(p.y/size),gz=Math.floor(p.z/size),key=(gx+64)+(gy+64)*128+(gz+16)*16384;
-        let bucket=grid.get(key);if(!bucket){bucket=this.collisionBuckets[bucketCount]??[];this.collisionBuckets[bucketCount]=bucket;this.collisionKeys[bucketCount++]=key;bucket.length=0;grid.set(key,bucket);}
-        const entry=this.collisionEntries[entryCount]??{};this.collisionEntries[entryCount++]=entry;entry.p=p;entry.r=r;entry.i=i;entry.spine=undefined;entry.invMass=this.collisionInverseMass(r,i,p);bucket.push(entry);
+        const p=r.nodes[i],gx=Math.floor(p.x/size),gy=Math.floor(p.y/size),gz=shallow?0:Math.floor(p.z/size);
+        minX=Math.min(minX,gx);minY=Math.min(minY,gy);minZ=Math.min(minZ,gz);maxX=Math.max(maxX,gx);maxY=Math.max(maxY,gy);maxZ=Math.max(maxZ,gz);
+        const entry=entries[entryCount]??new CollisionEntry();entries[entryCount++]=entry;entry.p=p;entry.r=r;entry.i=i;entry.spine=undefined;entry.invMass=this.collisionInverseMass(r,i,p);entry.gx=gx;entry.gy=gy;entry.gz=gz;
       }
     }
+    // Keep pool capacity, but release ropes removed by burning or source edits.
+    for(let n=entryCount;n<this.collisionActiveCount;n++){entries[n].p=null;entries[n].r=null;}
+    this.collisionActiveCount=entryCount;if(!entryCount)return;
+    // A one-cell border allows neighbor reads without bounds branches.
+    const width=maxX-minX+3,height=maxY-minY+3,plane=width*height,cellCount=plane*(maxZ-minZ+3),dense=cellCount<=MAX_GRID_CELLS;
+    const neighbors=shallow?FLAT_NEIGHBORS:FORWARD_NEIGHBORS;
+    if(dense){
+      if(this.collisionCells.length<cellCount)this.collisionCells=new Int32Array(Math.min(MAX_GRID_CELLS,2**Math.ceil(Math.log2(cellCount))));
+      this.collisionCells.fill(0,0,cellCount);
+      for(let n=0;n<neighbors.length;n++){const [x,y,z]=neighbors[n];this.collisionOffsets[n]=x+y*width+z*plane;}
+    }else grid.clear();
+    const cells=this.collisionCells,offsets=this.collisionOffsets;
+    for(let n=0;n<entryCount;n++){
+      const entry=entries[n],key=dense?(entry.gx-minX+1)+(entry.gy-minY+1)*width+(entry.gz-minZ+1)*plane:`${entry.gx},${entry.gy},${entry.gz}`;
+      let index=dense?cells[key]:grid.get(key);
+      if(!index){
+        index=++bucketCount;const bucket=buckets[index-1]??={entries:[],count:0};bucket.count=0;bucket.active=false;bucket.gx=entry.gx;bucket.gy=entry.gy;bucket.gz=entry.gz;this.collisionKeys[index-1]=key;
+        if(dense)cells[key]=index;else grid.set(key,index);
+      }
+      const bucket=buckets[index-1];bucket.entries[bucket.count++]=entry;if(entry.invMass>0)bucket.active=true;
+    }
     for(let b=0;b<bucketCount;b++){
-      const bucket=this.collisionBuckets[b];
-      for(let i=0;i<bucket.length;i++)for(let j=i+1;j<bucket.length;j++)this.resolveCollision(bucket[i],bucket[j],size,size2);
+      const bucket=buckets[b],list=bucket.entries,count=bucket.count;
+      if(bucket.active)for(let i=0;i<count;i++)for(let j=i+1;j<count;j++)this.checkCollision(list[i],list[j],size,size2);
       const key=this.collisionKeys[b];
-      for(const offset of FORWARD_NEIGHBORS){const neighbor=grid.get(key+offset);if(!neighbor)continue;
-        for(const a of bucket)for(const other of neighbor)this.resolveCollision(a,other,size,size2);
+      for(let n=0;n<neighbors.length;n++){
+        const delta=neighbors[n],index=dense?cells[key+offsets[n]]:grid.get(`${bucket.gx+delta[0]},${bucket.gy+delta[1]},${bucket.gz+delta[2]}`);if(!index)continue;
+        const neighbor=buckets[index-1];if(!bucket.active&&!neighbor.active)continue;
+        for(let i=0;i<count;i++)for(let j=0;j<neighbor.count;j++)this.checkCollision(list[i],neighbor.entries[j],size,size2);
       }
     }
   }
-  resolveCollision(entry,other,size,size2){
+  // Keep the overwhelmingly common rejection path small enough to inline.
+  checkCollision(entry,other,size,size2){
+    if(entry.invMass+other.invMass<=0)return;
     const p=entry.p,q=other.p,r=entry.r,s=other.r,i=entry.i,j=other.i;
     if(r===s&&Math.abs(i-j)<3)return;
-    let dx=p.x-q.x,dy=p.y-q.y,dz=p.z-q.z,d2=dx*dx+dy*dy+dz*dz;
-    if(d2>=size2)return;let d=Math.sqrt(d2);if(d<.00001){dx=.0001;dz=.0001;d=Math.sqrt(dx*dx+dz*dz);}
+    const dx=p.x-q.x,dy=p.y-q.y,dz=p.z-q.z,d2=dx*dx+dy*dy+dz*dz;
+    if(d2<size2)this.resolveCollision(entry,other,size,dx,dy,dz,d2);
+  }
+  resolveCollision(entry,other,size,dx,dy,dz,d2){
+    const p=entry.p,q=other.p,r=entry.r,s=other.r,i=entry.i,j=other.i;
+    let d=Math.sqrt(d2);if(d<.00001){dx=.0001;dz=.0001;d=Math.sqrt(dx*dx+dz*dz);}
     entry.spine??=this.isFeederSpine(r,i);other.spine??=this.isFeederSpine(s,j);if(entry.spine&&other.spine)return;
     p.contact=true;q.contact=true;p.contactCount=(p.contactCount||0)+1;q.contactCount=(q.contactCount||0)+1;
     if(s!==r){
@@ -185,7 +232,7 @@ export class RopeWorld{
     if(relativeNormal<0){const impulse=-relativeNormal/(wp+wq);pvx+=nx*impulse*wp;pvy+=ny*impulse*wp;pvz+=nz*impulse*wp;qvx-=nx*impulse*wq;qvy-=ny*impulse*wq;qvz-=nz*impulse*wq;}
     const rvx=pvx-qvx,rvy=pvy-qvy,rvz=pvz-qvz,normalAfter=rvx*nx+rvy*ny+rvz*nz;
     const tx=rvx-normalAfter*nx,ty=rvy-normalAfter*ny,tz=rvz-normalAfter*nz;
-    const wireFriction=Math.max(0,Math.min(.99,this.params.wireFriction)),friction=1-Math.pow(1-wireFriction,1/(this.collisionPassesThisStep||1)),frictionScale=friction/(wp+wq);
+    const frictionScale=this.contactFriction/(wp+wq);
     pvx-=tx*frictionScale*wp;pvy-=ty*frictionScale*wp;pvz-=tz*frictionScale*wp;
     qvx+=tx*frictionScale*wq;qvy+=ty*frictionScale*wq;qvz+=tz*frictionScale*wq;
     if(pPin){p.px=p.x;p.py=p.y;p.pz=p.z;}else{p.px=p.x-pvx;p.py=p.y-pvy;p.pz=p.z-pvz;}
