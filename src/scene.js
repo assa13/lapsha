@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
 import {MATERIALS} from './economy.js';
 import {createWireMaterial} from './wire-materials.js';
 import {RADIUS,FLOOR,BURN_DURATION} from './physics.js';
@@ -7,9 +8,9 @@ import {RADIUS,FLOOR,BURN_DURATION} from './physics.js';
 const WIDTH=6,HEIGHT=6*2868/1320;
 const MATERIAL_INDEX=Object.fromEntries(MATERIALS.map((m,i)=>[m.id,i]));
 export class GameScene{
-  constructor(canvas){
-    this.canvas=canvas;this.renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true,powerPreference:'high-performance'});
-    this.renderer.setClearColor(0,0);this.renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  constructor(canvas,graphics={}){
+    this.kind='webgl2';this.canvas=canvas;this.renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true,powerPreference:'default',...graphics});
+    this.renderer.setClearColor(0,0);this.renderer.setPixelRatio(Math.min(devicePixelRatio,graphics.antialias===false?1.5:2));
     this.renderer.toneMapping=THREE.ACESFilmicToneMapping;this.renderer.toneMappingExposure=.95;
     this.scene=new THREE.Scene();this.camera=new THREE.OrthographicCamera(-3,3,HEIGHT/2,-HEIGHT/2,.1,80);this.camera.position.set(0,0,30);
     const pmrem=new THREE.PMREMGenerator(this.renderer),room=new RoomEnvironment();
@@ -53,24 +54,32 @@ export class GameScene{
     // Deterministic cork grain, generated once.
     let seed=42;for(let i=0;i<1200;i++){seed=(seed*16807)%2147483647;const x=seed%128;seed=(seed*16807)%2147483647;const y=seed%128;ctx.fillStyle=i%3?'#774716':'#d79449';ctx.fillRect(x,y,1+(i%3),1+(i%2));}
     const corkMap=new THREE.CanvasTexture(corkCanvas);corkMap.colorSpace=THREE.SRGBColorSpace;
-    const glass=new THREE.MeshPhysicalMaterial({color:0xe4eeff,metalness:0,roughness:.02,transmission:.98,thickness:.045,ior:1.15,clearcoat:1,transparent:true,opacity:1,envMapIntensity:1.1,depthWrite:false});
-    const lipMaterial=new THREE.MeshPhysicalMaterial({color:0xc8d9f0,metalness:.45,roughness:.13,transparent:true,opacity:.65,depthWrite:false});
+    // The shell only needs a tint: physical transmission redraws the entire
+    // shop into a separate buffer, including every animated wire shader.
+    const glass=new THREE.MeshBasicMaterial({color:0xcde7ff,transparent:true,opacity:.12,depthWrite:false});
+    const lipMaterial=new THREE.MeshStandardMaterial({color:0xc8d9f0,metalness:.45,roughness:.13,transparent:true,opacity:.65,depthWrite:false});
     const profile=[new THREE.Vector2(0,-1.18),new THREE.Vector2(.12,-1.17),new THREE.Vector2(.23,-1.09),new THREE.Vector2(.265,-.98),new THREE.Vector2(.265,.94),new THREE.Vector2(.295,.97),new THREE.Vector2(.295,1.05),new THREE.Vector2(.25,1.07)];
-    const bottleGeometry=new THREE.LatheGeometry(profile,32);
-    const corkGeometry=new THREE.CylinderGeometry(.25,.235,.27,24);
+    const bottleGeometry=new THREE.LatheGeometry(profile,24);
+    const corkGeometry=new THREE.CylinderGeometry(.25,.235,.27,16);
     const corkMaterial=new THREE.MeshStandardMaterial({map:corkMap,roughness:.83});
-    const ringGeometry=new THREE.TorusGeometry(.268,.027,8,32);
+    const ringGeometry=new THREE.TorusGeometry(.268,.027,6,24);
+    const points=[];for(let k=0;k<=40;k++){const t=k/40;points.push(new THREE.Vector3(Math.sin(t*Math.PI*3.5)*.115,-.99+t*1.87,Math.cos(t*Math.PI*3.5)*.085));}
+    const wireGeometry=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),64,.108,8,false);
+    const bubbles=[];for(let j=0;j<3;j++){const b=new THREE.SphereGeometry(.03+j%2*.011,8,6);b.translate(Math.sin(j*3)*.16,-.65+j*.57,.09);bubbles.push(b);}
+    // One shared, inexpensive glint mesh per vial; no wire shader on bubbles.
+    const bubbleGeometry=mergeGeometries(bubbles);for(const b of bubbles)b.dispose();
+    const bubbleMaterial=new THREE.MeshBasicMaterial({color:0xe4f1ff,transparent:true,opacity:.5,depthWrite:false});
+    const edgeGeometry=new THREE.CylinderGeometry(.009,.009,1.82,6);
+    const edgeMat=new THREE.MeshBasicMaterial({color:0xe4f1ff,transparent:true,opacity:.45,depthWrite:false});
     for(let index=0;index<MATERIALS.length;index++){
       const m=MATERIALS[index],group=new THREE.Group();
-      const points=[];for(let k=0;k<=40;k++){const t=k/40;points.push(new THREE.Vector3(Math.sin(t*Math.PI*3.5)*.115,-.99+t*1.87,Math.cos(t*Math.PI*3.5)*.085));}
-      group.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),128,.108,12,false),this.materials[m.id]));
+      group.add(new THREE.Mesh(wireGeometry,this.materials[m.id]));
       const bottle=new THREE.Mesh(bottleGeometry,glass);bottle.renderOrder=2;group.add(bottle);
       const cork=new THREE.Mesh(corkGeometry,corkMaterial);cork.position.y=1.155;group.add(cork);
       const lip=new THREE.Mesh(ringGeometry,lipMaterial);lip.rotation.x=Math.PI/2;lip.position.y=1.025;group.add(lip);
-      for(let j=0;j<5;j++){const b=new THREE.Mesh(new THREE.SphereGeometry(.03+j%2*.011,10,8),this.materials[m.id]);b.position.set(Math.sin(j*3)*.16,-.72+j*.34,.09);group.add(b);}
+      group.add(new THREE.Mesh(bubbleGeometry,bubbleMaterial));
       // Visible glass edge highlights: real geometry, not a flat bottle image.
-      const edgeMat=new THREE.MeshBasicMaterial({color:0xe4f1ff,transparent:true,opacity:.45});
-      const edge=new THREE.Mesh(new THREE.CylinderGeometry(.009,.009,1.82,6),edgeMat);edge.position.set(-.225,-.03,.13);group.add(edge);
+      const edge=new THREE.Mesh(edgeGeometry,edgeMat);edge.position.set(-.225,-.03,.13);group.add(edge);
       group.position.set((index%3-1)*1.77,index%6<3?2.65:-.74,0);group.rotation.z=-.12;
       group.userData={index,home:group.position.clone()};this.shop.add(group);this.vials.push(group);
     }
@@ -142,7 +151,7 @@ export class GameScene{
     this.rim.position.x=3+Math.sin(time*.65)*2;
     this.wireTime.value=time;
     if(this.mode==='game')this.syncRopes(ropes,wireRadius);
-    else for(let i=0;i<this.vials.length;i++){const v=this.vials[i];v.rotation.y=Math.sin(time*.7+i)*.2;if(this.mode==='detail'&&i===this.selected)v.rotation.y=time*.22;}
+    else if(this.shop.visible)for(let i=0;i<this.vials.length;i++){const v=this.vials[i];if(!v.visible)continue;v.rotation.y=Math.sin(time*.7+i)*.2;if(this.mode==='detail'&&i===this.selected)v.rotation.y=time*.22;}
     this.renderer.render(this.scene,this.camera);
   }
 }

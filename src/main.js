@@ -1,5 +1,7 @@
 import './style.css';
 import {GameScene} from './scene.js';
+import {CanvasScene} from './canvas-scene.js';
+import {requestGraphicsContext} from './graphics.js';
 import {RopeWorld,PHYSICS_DEFAULTS} from './physics.js';
 import {MATERIALS,MODIFIERS,modifierPrice,incomeBonus,burnDelay,autoInterval,SAVE_KEY,LEGACY_SAVE_KEY,parseSave,purchase,selectMaterial,feedPrice,wirePrice,upgrade,rewardForRope,creditIncome,feedSpeed,autoPrice,offlinePrice,AUTO_INTERVALS,OFFLINE_HOURS,OFFLINE_EFFICIENCY,PRESTIGE_THRESHOLD,SPARK_BONUS,permanentBonus,prestigeGain,prestige,claimOffline} from './economy.js';
 
@@ -146,7 +148,8 @@ function frame(now){requestAnimationFrame(frame);const dt=Math.min((now-lastTime
   }if(accumulator>=step)accumulator=step;}else accumulator=0;
   lastPhysicsMs=performance.now()-physicsStart;updatePileNote();const renderStart=performance.now();scene.render(now/1000,world.ropes,world.params.radius);lastRenderMs=performance.now()-renderStart;frames++;
 }
-try{scene=new GameScene($('scene'));scene.setWireTexture(wireTextureStyle);updateHUD();persist();showOffline(launchOffline);requestAnimationFrame(frame);$('scene').addEventListener('webglcontextlost',e=>{e.preventDefault();setPaused(true);notify('Графический контекст потерян. Обнови страницу; прогресс сохранён.');persist();});
+try{const graphics=requestGraphicsContext($('scene'));scene=graphics?new GameScene($('scene'),graphics):new CanvasScene($('scene'));$('scene').dataset.renderer=scene.kind;
+  scene.setWireTexture(wireTextureStyle);updateHUD();persist();showOffline(launchOffline);if(!graphics)notify('Включена упрощённая графика: браузер не смог запустить 3D.');requestAnimationFrame(frame);$('scene').addEventListener('webglcontextlost',e=>{e.preventDefault();setPaused(true);notify('Графический контекст потерян. Обнови страницу; прогресс сохранён.');persist();});
   // Read-only diagnostics for repeatable browser validation. No currency/debug cheats.
   window.__lapsha={snapshot:()=>({mode,shopPage,paused,autoLevel:save.autoLevel,autoEnabled:save.autoEnabled,offlineLevel:save.offlineLevel,yieldLevel:save.yieldLevel,burnLevel:save.burnLevel,turboLevel:save.turboLevel,autoElapsed,sparks:save.sparks,runEarned:save.runEarned,prestiges:save.prestiges,coins:save.coins,cuts:save.cuts,selected:save.selected,activeMaterials:[...save.activeMaterials],owned:[...save.owned],feedLevel:save.feedLevel,wireCount:save.wireCount,frames,simulationTime:world.time,nodeCount:world.count,pileHeight:world.pileHeight,extrusionBlocked:world.extrusionBlocked,performance:{physicsMs:lastPhysicsMs,renderMs:lastRenderMs,steps:lastSteps},ropes:world.ropes.map(r=>({attached:r.attached,landed:r.landed,restTime:r.restTime,burning:r.fade>0,material:r.material,linkMaterials:[...r.linkMaterials],emitMaterial:r.emitMaterial,nodes:r.nodes.map(p=>({x:p.x,y:p.y,z:p.z})),length:r.links.reduce((a,b)=>a+b,0)}))}),project:p=>scene.worldToScreen(p)};
-}catch(error){console.error(error);$('error').hidden=false;$('error').textContent='Не удалось запустить 3D. Открой игру в Chrome, Edge или Firefox с включённым аппаратным ускорением. '+error.message;}
+}catch(error){console.error(error);$('error').hidden=false;$('error').textContent='Не удалось запустить графику. Попробуй обновить страницу или открыть игру в другом браузере. Прогресс сохранён. '+error.message;}

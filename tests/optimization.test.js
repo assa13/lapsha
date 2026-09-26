@@ -48,6 +48,26 @@ function scene(){
   s.embers=new THREE.Points(new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(new Float32Array(5400),3)));
   return s;
 }
+
+test('shop stays within its draw budget without duplicating animated shaders or geometry',()=>{
+  const s=scene();s.shop=new THREE.Group();s.scene=new THREE.Scene();s.vials=[];s.shopPage=0;
+  const previousDocument=globalThis.document;
+  try{
+    globalThis.document={createElement:()=>({getContext:()=>({fillRect(){}})})};
+    s.createVials();
+  }finally{if(previousDocument===undefined)delete globalThis.document;else globalThis.document=previousDocument;}
+  assert.equal(s.vials.length,MATERIALS.length);
+  const geometries=new Set();let meshes=0,triangles=0,animated=0;
+  for(const [i,vial]of s.vials.entries())vial.traverse(obj=>{
+    if(!obj.isMesh)return;geometries.add(obj.geometry);
+    assert.ok(!obj.material.transmission,'no additional transmission render pass');
+    if(i<6){meshes++;triangles+=obj.geometry.index.count/3;if(obj.material===s.materials[MATERIALS[i].id])animated++;}
+  });
+  assert.ok(meshes<=36);assert.ok(triangles<=12000);assert.equal(animated,6);assert.ok(geometries.size<=6);
+  s.setMode('shop');assert.equal(s.vials.filter(v=>v.visible).length,6);
+  s.setShopPage(2);assert.equal(s.vials.filter(v=>v.visible).length,3);
+  s.setMode('detail',6);assert.deepEqual(s.vials.filter(v=>v.visible),[s.vials[6]]);
+});
 function wire(n=60){const w=new RopeWorld(),r=w.feeder;r.nodes=Array.from({length:n},(_,i)=>point(Math.sin(i*.15),3-i*.08,Math.cos(i*.2)*.1));r.links=Array(n-1).fill(.14);r.linkMaterials=r.links.map((_,i)=>i<20?'silver':'gold');return r;}
 function equalFresh(s,r){
   const fresh=scene();fresh.syncRopes([r]);const a=s.meshes.get(r.id),b=fresh.meshes.get(r.id),n=a.userData.rings*a.userData.radial;
