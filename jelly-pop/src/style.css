@@ -1,5 +1,7 @@
+@font-face{font-family:'Proxima Nova';src:url('https://raw.githubusercontent.com/assa13/lapsha/master/public/fonts/proxima-nova-condensed-bold-italic.otf') format('opentype');font-weight:700;font-style:italic;font-display:swap}
+@font-face{font-family:'Proxima Nova';src:url('https://raw.githubusercontent.com/assa13/lapsha/master/public/fonts/proxima-nova-condensed-black-italic.otf') format('opentype');font-weight:900;font-style:italic;font-display:swap}
 :root{
-  font-family:Inter,ui-rounded,"SF Pro Rounded","Segoe UI",system-ui,sans-serif;
+  font-family:'Proxima Nova',Arial,sans-serif;font-style:italic;
   color:#f6f8ff;background:#0b1020;font-synthesis:none;
 }
 *{box-sizing:border-box}
@@ -22,28 +24,28 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:1;
   position:absolute;z-index:8;left:5.2%;right:5.2%;top:max(2.8%,env(safe-area-inset-top));
   display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;
 }
-.brand{display:grid;gap:.8cqw}
-.eyebrow{font-size:2.2cqw;letter-spacing:.18em;text-transform:uppercase;opacity:.58;font-weight:800}
-.brand strong{font-size:5.2cqw;line-height:.96;letter-spacing:-.045em;font-weight:850}
+.brand{display:grid;gap:.2cqw}
+.eyebrow{font-size:1.8cqw;letter-spacing:.14em;text-transform:uppercase;opacity:.58;font-weight:800}
+.brand strong{font-size:4.2cqw;line-height:.9;letter-spacing:-.045em;font-weight:850}
 .stats{display:flex;gap:1.2cqw}
 .pill{
-  min-width:14cqw;padding:1.7cqw 2.6cqw;border-radius:5cqw;
+  min-width:11cqw;padding:1.15cqw 2cqw;border-radius:5cqw;
   background:rgba(13,45,119,.45);border:1px solid rgba(224,237,255,.15);
   backdrop-filter:blur(10px);text-align:center;
 }
-.pill span{display:block;font-size:1.75cqw;opacity:.55;letter-spacing:.08em;text-transform:uppercase}
-.pill b{display:block;font-size:3.7cqw;line-height:1.15;font-variant-numeric:tabular-nums}
+.pill span{display:block;font-size:1.45cqw;opacity:.55;letter-spacing:.08em;text-transform:uppercase}
+.pill b{display:block;font-size:3.15cqw;line-height:1.15;font-variant-numeric:tabular-nums}
 #combo-pill[data-hot="true"]{background:rgba(118,68,147,.38)}
 #hint{
-  position:absolute;z-index:6;top:25%;left:11%;right:11%;text-align:center;pointer-events:none;
+  position:absolute;z-index:6;top:17%;left:20%;right:20%;text-align:center;pointer-events:none;
   transition:opacity .5s ease,transform .5s ease;
 }
 #hint.hidden{opacity:0;transform:translateY(-10px)}
-#hint strong{display:block;font-size:5.2cqw;line-height:1.05;font-weight:850;letter-spacing:-.035em}
-#hint span{display:block;margin-top:1.7cqw;font-size:2.7cqw;line-height:1.45;opacity:.58}
+#hint strong{display:block;font-size:3.1cqw;line-height:1;font-weight:850;letter-spacing:-.035em}
+#hint span{display:block;margin-top:1.7cqw;font-size:1.9cqw;line-height:1.3;opacity:.58}
 #bank{
   position:absolute;z-index:10;left:5%;right:5%;bottom:max(2.8%,env(safe-area-inset-bottom));
-  height:7.2%;display:flex;gap:2.2cqw;align-items:stretch;
+  height:6.2%;display:flex;gap:2.2cqw;align-items:stretch;
 }
 .balance{
   flex:1;min-width:0;border-radius:5cqw;background:rgba(22,69,157,.62);
@@ -51,11 +53,11 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:1;
   display:flex;align-items:center;justify-content:space-between;padding:0 4.2cqw;
 }
 .balance span{font-size:2.2cqw;opacity:.55;letter-spacing:.1em;text-transform:uppercase}
-.balance strong{font-size:5.8cqw;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.balance strong{font-size:5cqw;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
 .icon-btn{
   width:16.5cqw;border-radius:5cqw;background:rgba(22,69,157,.72);
   border:1px solid rgba(220,235,255,.14);backdrop-filter:blur(12px);
-  display:grid;place-items:center;font-size:3.1cqw;font-weight:800;
+  display:grid;place-items:center;font-size:2.55cqw;font-weight:900;
 }
 .icon-btn:active{transform:scale(.96)}
 #shop{
