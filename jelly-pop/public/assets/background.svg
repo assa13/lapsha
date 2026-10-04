@@ -1,0 +1,10 @@
+<svg preserveAspectRatio="none" width="1320" height="2868" viewBox="0 0 1320 2868" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip)"><rect width="1320" height="2868" fill="url(#bg)"/>
+<g filter="url(#blur)"><rect x="-290" y="2008" width="1900" height="830" fill="#3767CD"/></g>
+<g filter="url(#lineBlur)"><path d="M-89 2408.5L1469 2394V2423L-89 2408.5Z" fill="white"/></g></g>
+<defs>
+<filter id="blur" x="-334" y="1964" width="1988" height="918"><feGaussianBlur stdDeviation="22"/></filter>
+<filter id="lineBlur" x="-153" y="2330" width="1686" height="157"><feGaussianBlur stdDeviation="32"/></filter>
+<linearGradient id="bg" x1="660" y1="0" x2="660" y2="2868"><stop stop-color="#134FBD"/><stop offset="1" stop-color="#2D53B6"/></linearGradient>
+<clipPath id="clip"><rect width="1320" height="2868" fill="white"/></clipPath>
+</defs></svg>
