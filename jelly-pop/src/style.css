@@ -1,5 +1,5 @@
-@font-face{font-family:'Proxima Nova';src:url('https://raw.githubusercontent.com/assa13/lapsha/master/public/fonts/proxima-nova-condensed-bold-italic.otf') format('opentype');font-weight:700;font-style:italic;font-display:swap}
-@font-face{font-family:'Proxima Nova';src:url('https://raw.githubusercontent.com/assa13/lapsha/master/public/fonts/proxima-nova-condensed-black-italic.otf') format('opentype');font-weight:900;font-style:italic;font-display:swap}
+@font-face{font-family:'Proxima Nova';src:url('https://raw.githack.com/assa13/lapsha/master/public/fonts/proxima-nova-condensed-bold-italic.otf') format('opentype');font-weight:700;font-style:italic;font-display:swap}
+@font-face{font-family:'Proxima Nova';src:url('https://raw.githack.com/assa13/lapsha/master/public/fonts/proxima-nova-condensed-black-italic.otf') format('opentype');font-weight:900;font-style:italic;font-display:swap}
 :root{
   font-family:'Proxima Nova',Arial,sans-serif;font-style:italic;
   color:#f6f8ff;background:#0b1020;font-synthesis:none;
