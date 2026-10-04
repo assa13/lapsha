@@ -26,13 +26,13 @@ document.querySelector('#app').innerHTML=`
 <main id="game">
   <canvas id="scene"></canvas>
   <header id="hud">
-    <div class="brand"><span class="eyebrow">soft idle</span><strong>JELLY POP</strong></div>
+    <div class="brand"><span class="eyebrow">JELLY LAB</span><strong>POP</strong></div>
     <div class="stats">
       <div class="pill"><span>blocks</span><b id="count">0</b></div>
       <div class="pill" id="combo-pill"><span>combo</span><b id="combo">×1.0</b></div>
     </div>
   </header>
-  <div id="hint"><strong>Лопай желе.<br>Смешивай цвета.</strong><span>Соседние блоки впитывают цвет и массу.<br>Редкие смеси дают больший множитель.</span></div>
+  <div id="hint"><strong>tap jelly</strong><span>mix colors · build combo</span></div>
   <div id="toast"></div>
   <footer id="bank">
     <div class="balance"><span>gel</span><strong id="coins">0</strong></div>
@@ -77,7 +77,7 @@ class Jelly{
   constructor(x,y,colorIndex,rare=false){
     this.id=id++;this.x=x;this.y=y;this.vx=(Math.random()-.5)*14;this.vy=8+Math.random()*18;
     this.colorIndex=colorIndex;this.color=COLORS[colorIndex].rgb.slice();this.rare=rare;
-    this.base=W*(rare?.092:.073+Math.random()*.014);this.mass=rare?1.35:1;
+    this.base=W*(rare?.145:.112+Math.random()*.018);this.mass=rare?1.35:1;
     this.angle=(Math.random()-.5)*.14;this.spin=(Math.random()-.5)*.18;
     this.sx=1;this.sy=1;this.hit=0;this.age=0;this.phase=Math.random()*Math.PI*2;
   }
@@ -85,16 +85,16 @@ class Jelly{
 }
 
 function spawn(initial=false){
-  if(blocks.length>36)return;
+  if(blocks.length>18)return;
   const rare=Math.random()<.02+save.rare*.012;
   const ci=rare?Math.floor(Math.random()*COLORS.length):Math.floor(Math.random()*4);
-  const r=W*(rare?.092:.078);
+  const r=W*(rare?.145:.12);
   const x=r*1.4+Math.random()*(W-r*2.8);
   const b=new Jelly(x,-r*1.7,ci,rare);
   if(initial){b.y=H*(.32+Math.random()*.42);b.vy=0;}
   blocks.push(b);
 }
-for(let i=0;i<8;i++)spawn(true);
+for(let i=0;i<5;i++)spawn(true);
 
 function showToast(text){
   toast.textContent=text;toast.classList.add('visible');
@@ -137,7 +137,7 @@ function popBlock(b,auto=false){
 }
 
 function physics(dt){
-  const floor=H*.875,left=W*.055,right=W*.945,g=540;
+  const floor=H*.835,left=W*.04,right=W*.96,g=500;
   for(const b of blocks){
     b.age+=dt;b.vy+=g*dt;b.vx*=Math.pow(.991,dt*60);b.spin*=Math.pow(.986,dt*60);
     b.x+=b.vx*dt;b.y+=b.vy*dt;b.angle+=b.spin*dt;
@@ -151,55 +151,72 @@ function physics(dt){
   }
   for(let pass=0;pass<3;pass++)for(let i=0;i<blocks.length;i++)for(let j=i+1;j<blocks.length;j++){
     const a=blocks[i],b=blocks[j],dx=b.x-a.x,dy=b.y-a.y;
-    const d=Math.hypot(dx,dy)||.001,min=(a.r+b.r)*.82;if(d>=min)continue;
+    const d=Math.hypot(dx,dy)||.001,min=(a.r+b.r)*.72;if(d>=min)continue;
     const nx=dx/d,ny=dy/d,over=min-d,total=a.mass+b.mass;
     a.x-=nx*over*(b.mass/total)*.5;a.y-=ny*over*(b.mass/total)*.5;
     b.x+=nx*over*(a.mass/total)*.5;b.y+=ny*over*(a.mass/total)*.5;
     const rvx=b.vx-a.vx,rvy=b.vy-a.vy,sep=rvx*nx+rvy*ny;
     if(sep<0){const imp=-sep*.18;a.vx-=nx*imp*b.mass/total;a.vy-=ny*imp*b.mass/total;b.vx+=nx*imp*a.mass/total;b.vy+=ny*imp*a.mass/total;}
-    const s=clamp(over/min*3.0,.05,.9);
+    const s=clamp(over/min*3.8,.06,1);
     a.hit=Math.max(a.hit,s);b.hit=Math.max(b.hit,s);
-    a.sx=lerp(a.sx,1+Math.abs(nx)*s*.35,.5);a.sy=lerp(a.sy,1-Math.abs(ny)*s*.28,.5);
-    b.sx=lerp(b.sx,1+Math.abs(nx)*s*.35,.5);b.sy=lerp(b.sy,1-Math.abs(ny)*s*.28,.5);
+    a.sx=lerp(a.sx,1+Math.abs(nx)*s*.5,.58);a.sy=lerp(a.sy,1-Math.abs(ny)*s*.42,.58);
+    b.sx=lerp(b.sx,1+Math.abs(nx)*s*.5,.58);b.sy=lerp(b.sy,1-Math.abs(ny)*s*.42,.58);
   }
   for(const b of blocks){
     b.hit=Math.max(0,b.hit-dt*2.2);
-    const wobble=Math.sin(b.age*5+b.phase)*.014*(1+b.hit*2.4);
+    const wobble=Math.sin(b.age*4.2+b.phase)*.025*(1+b.hit*2.8);
     b.sx=lerp(b.sx,1+wobble,clamp(dt*7,0,1));b.sy=lerp(b.sy,1-wobble,clamp(dt*7,0,1));
   }
 }
 
-function rounded(x,y,w,h,r){
-  const q=Math.min(r,w*.45,h*.45);ctx.beginPath();ctx.moveTo(x+q,y);
-  ctx.arcTo(x+w,y,x+w,y+h,q);ctx.arcTo(x+w,y+h,x,y+h,q);ctx.arcTo(x,y+h,x,y,q);ctx.arcTo(x,y,x+w,y,q);ctx.closePath();
+function jellyPath(size,corner,b){
+  const pts=12,rx=size*.5,ry=size*.5;
+  ctx.beginPath();
+  for(let i=0;i<pts;i++){
+    const a=i/pts*Math.PI*2;
+    const ca=Math.cos(a),sa=Math.sin(a);
+    const square=1/Math.pow(Math.pow(Math.abs(ca),5)+Math.pow(Math.abs(sa),5),1/5);
+    const pulse=1+Math.sin(b.age*3.4+b.phase+i*.9)*.018+b.hit*Math.sin(i*1.7+b.phase)*.045;
+    const x=ca*rx*square*pulse,y=sa*ry*square*pulse;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.closePath();
 }
 function drawJelly(b){
   ctx.save();ctx.translate(b.x,b.y);ctx.rotate(b.angle);
-  ctx.scale(clamp(b.sx*(1+b.hit*.05),.8,1.25),clamp(b.sy*(1-b.hit*.05),.74,1.2));
-  const s=b.r*1.58,c=s*.28;
-  const grad=ctx.createLinearGradient(-s*.4,-s*.55,s*.4,s*.5);
-  grad.addColorStop(0,rgba(mix(b.color,[255,255,255],.22),.72));
-  grad.addColorStop(.55,rgba(b.color,.56));
-  grad.addColorStop(1,rgba(mix(b.color,[40,70,120],.16),.64));
-  ctx.shadowColor='rgba(6,25,72,.16)';ctx.shadowBlur=b.r*.22;ctx.shadowOffsetY=b.r*.1;
-  rounded(-s/2,-s/2,s,s,c);ctx.fillStyle=grad;ctx.fill();
-  ctx.shadowColor='transparent';ctx.strokeStyle='rgba(250,253,255,.28)';ctx.lineWidth=Math.max(1,b.r*.02);ctx.stroke();
-  const hi=ctx.createRadialGradient(-s*.17,-s*.19,0,-s*.17,-s*.19,s*.4);
-  hi.addColorStop(0,'rgba(255,255,255,.34)');hi.addColorStop(.4,'rgba(255,255,255,.10)');hi.addColorStop(1,'rgba(255,255,255,0)');
-  ctx.globalCompositeOperation='screen';rounded(-s*.38,-s*.39,s*.53,s*.4,c*.7);ctx.fillStyle=hi;ctx.fill();
-  ctx.globalCompositeOperation='source-over';
-  ctx.save();
-  ctx.globalAlpha=.32;
-  ctx.fillStyle='rgba(255,255,255,.55)';
-  const bubbleR=Math.max(1.5,b.r*.035);
-  ctx.beginPath();ctx.arc(-s*.15,s*.12,bubbleR,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.arc(s*.13,s*.2,bubbleR*.72,0,Math.PI*2);ctx.fill();
+  ctx.scale(clamp(b.sx*(1+b.hit*.08),.72,1.4),clamp(b.sy*(1-b.hit*.08),.62,1.34));
+  const s=b.r*1.72;
+  const grad=ctx.createLinearGradient(-s*.42,-s*.58,s*.42,s*.55);
+  grad.addColorStop(0,rgba(mix(b.color,[255,255,255],.28),.66));
+  grad.addColorStop(.48,rgba(b.color,.46));
+  grad.addColorStop(1,rgba(mix(b.color,[25,60,120],.2),.58));
+  ctx.shadowColor='rgba(3,20,65,.26)';ctx.shadowBlur=b.r*.34;ctx.shadowOffsetY=b.r*.15;
+  jellyPath(s,s*.28,b);ctx.fillStyle=grad;ctx.fill();
+  ctx.shadowColor='transparent';ctx.lineWidth=Math.max(1.2,b.r*.018);ctx.strokeStyle='rgba(246,252,255,.32)';ctx.stroke();
+  ctx.save();ctx.globalCompositeOperation='screen';ctx.globalAlpha=.58;
+  const hi=ctx.createRadialGradient(-s*.18,-s*.21,0,-s*.18,-s*.21,s*.38);
+  hi.addColorStop(0,'rgba(255,255,255,.52)');hi.addColorStop(.38,'rgba(255,255,255,.12)');hi.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.beginPath();ctx.ellipse(-s*.14,-s*.17,s*.22,s*.13,-.45,0,Math.PI*2);ctx.fillStyle=hi;ctx.fill();ctx.restore();
+  ctx.save();ctx.globalAlpha=.24;ctx.fillStyle='white';
+  for(let i=0;i<3;i++){const q=b.r*(.026+i*.006);ctx.beginPath();ctx.arc((-0.18+i*.16)*s,.12*s+Math.sin(i+b.phase)*.05*s,q,0,Math.PI*2);ctx.fill();}
   ctx.restore();
-  if(b.rare){ctx.strokeStyle='rgba(255,255,255,.42)';ctx.lineWidth=b.r*.035;rounded(-s*.43,-s*.43,s*.86,s*.86,c*.84);ctx.stroke();}
   ctx.restore();
 }
 function render(){
   ctx.clearRect(0,0,W,H);
+  const floor=H*.835;
+  const ground=ctx.createLinearGradient(0,floor-H*.04,0,H);
+  ground.addColorStop(0,'rgba(210,230,255,.04)');
+  ground.addColorStop(.12,'rgba(20,58,145,.28)');
+  ground.addColorStop(1,'rgba(9,35,98,.72)');
+  ctx.fillStyle=ground;ctx.fillRect(0,floor-H*.025,W,H-floor+H*.025);
+  ctx.strokeStyle='rgba(225,240,255,.22)';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,floor);ctx.lineTo(W,floor);ctx.stroke();
+  for(const b of blocks){
+    const d=clamp((floor-b.y)/(H*.5),0,1);
+    const a=.22*(1-d);if(a<=.002)continue;
+    ctx.save();ctx.globalAlpha=a;ctx.fillStyle='rgba(4,22,72,.9)';
+    ctx.beginPath();ctx.ellipse(b.x,floor,b.r*1.2,b.r*.24,0,0,Math.PI*2);ctx.fill();ctx.restore();
+  }
   for(let i=streams.length-1;i>=0;i--){
     const st=streams[i];st.life-=1/60;if(st.life<=0){streams.splice(i,1);continue;}
     const t=1-st.life/st.max,alpha=Math.sin(Math.PI*clamp(t,0,1))*.28;
@@ -248,7 +265,7 @@ function updateHud(){
 function frame(now){
   const dt=Math.min(.033,(now-last)/1000||.016);last=now;
   if(shop.hidden){
-    spawnClock+=dt;const interval=Math.max(.42,1.45-save.spawn*.115);
+    spawnClock+=dt;const interval=Math.max(.68,1.8-save.spawn*.12);
     while(spawnClock>interval){spawnClock-=interval;spawn();}
     if(save.auto>0){
       autoClock+=dt;const gap=Math.max(2.8,9-save.auto*1.15);
