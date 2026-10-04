@@ -1,0 +1,347 @@
+import './style.css';
+
+const COLORS=[
+  {name:'Coral',rgb:[255,122,137]},
+  {name:'Blue',rgb:[108,190,255]},
+  {name:'Honey',rgb:[255,198,105]},
+  {name:'Mint',rgb:[112,224,178]},
+  {name:'Lilac',rgb:[184,137,255]}
+];
+const SAVE_KEY='jelly-pop-save-v1';
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const rgba=(c,a=1)=>`rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+const mix=(a,b,t)=>a.map((v,i)=>lerp(v,b[i],t));
+const fmt=n=>n<1000?String(Math.floor(n)):n<1e6?(n/1e3).toFixed(n<1e4?1:0)+'K':(n/1e6).toFixed(1)+'M';
+
+const fresh=()=>({v:1,coins:0,spawn:0,value:0,auto:0,rare:0,pops:0,lastSeen:Date.now()});
+function load(){
+  try{const s=JSON.parse(localStorage.getItem(SAVE_KEY));return s&&s.v===1?{...fresh(),...s}:fresh();}
+  catch{return fresh();}
+}
+let save=load();
+const persist=()=>{save.lastSeen=Date.now();localStorage.setItem(SAVE_KEY,JSON.stringify(save));};
+
+document.querySelector('#app').innerHTML=`
+<main id="game">
+  <canvas id="scene"></canvas>
+  <header id="hud">
+    <div class="brand"><span class="eyebrow">JELLY LAB</span><strong>POP</strong></div>
+    <div class="stats">
+      <div class="pill"><span>blocks</span><b id="count">0</b></div>
+      <div class="pill" id="combo-pill"><span>combo</span><b id="combo">×1.0</b></div>
+    </div>
+  </header>
+  <div id="hint"><strong>tap jelly</strong><span>mix colors · build combo</span></div>
+  <div id="toast"></div>
+  <footer id="bank">
+    <div class="balance"><span>gel</span><strong id="coins">0</strong></div>
+    <button class="icon-btn" id="shop-button" type="button">SHOP</button>
+  </footer>
+  <section id="shop" hidden>
+    <div class="shop-top">
+      <div class="shop-title"><small>workshop</small><h2>Улучшения</h2></div>
+      <button id="close-shop" type="button" aria-label="Закрыть">×</button>
+    </div>
+    <div class="upgrade-grid" id="upgrade-grid"></div>
+    <p class="shop-note">Автолопание выбирает спокойные одиночные блоки и не ломает ручные комбинации.</p>
+  </section>
+</main>`;
+
+const game=document.querySelector('#game');
+const canvas=document.querySelector('#scene');
+const ctx=canvas.getContext('2d',{alpha:true});
+const coinsEl=document.querySelector('#coins');
+const countEl=document.querySelector('#count');
+const comboEl=document.querySelector('#combo');
+const comboPill=document.querySelector('#combo-pill');
+const hint=document.querySelector('#hint');
+const shop=document.querySelector('#shop');
+const shopButton=document.querySelector('#shop-button');
+const closeShop=document.querySelector('#close-shop');
+const upgradeGrid=document.querySelector('#upgrade-grid');
+const toast=document.querySelector('#toast');
+
+let W=0,H=0,dpr=1,last=performance.now(),spawnClock=0,autoClock=0,combo=1,comboTimer=0;
+const blocks=[],drops=[],streams=[];
+let id=1;
+
+function resize(){
+  const r=game.getBoundingClientRect();W=r.width;H=r.height;dpr=Math.min(devicePixelRatio||1,2);
+  canvas.width=Math.max(1,Math.round(W*dpr));canvas.height=Math.max(1,Math.round(H*dpr));
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+new ResizeObserver(resize).observe(game);resize();
+
+class Jelly{
+  constructor(x,y,colorIndex,rare=false){
+    this.id=id++;this.x=x;this.y=y;this.vx=(Math.random()-.5)*10;this.vy=6+Math.random()*12;
+    this.colorIndex=colorIndex;this.color=COLORS[colorIndex].rgb.slice();this.rare=rare;
+    this.base=W*(rare?.145:.112+Math.random()*.018);this.mass=rare?1.35:1;
+    this.angle=(Math.random()-.5)*.08;this.spin=(Math.random()-.5)*.08;
+    this.hit=0;this.age=0;this.phase=Math.random()*Math.PI*2;
+    this.nodes=Array.from({length:16},(_,i)=>({x:0,y:0,vx:0,vy:0,i}));
+    this.syncRest(true);
+  }
+  get r(){return this.base*Math.sqrt(this.mass);}
+  restPoint(i){
+    const a=i/this.nodes.length*Math.PI*2,ca=Math.cos(a),sa=Math.sin(a);
+    const n=5.2;
+    const q=1/Math.pow(Math.pow(Math.abs(ca),n)+Math.pow(Math.abs(sa),n),1/n);
+    const r=this.r*.78*q;
+    return {x:ca*r,y:sa*r};
+  }
+  syncRest(snap=false){
+    for(const p of this.nodes){
+      const t=this.restPoint(p.i);
+      if(snap){p.x=t.x;p.y=t.y;}
+      p.tx=t.x;p.ty=t.y;
+    }
+  }
+}
+
+function spawn(initial=false){
+  if(blocks.length>18)return;
+  const rare=Math.random()<.02+save.rare*.012;
+  const ci=rare?Math.floor(Math.random()*COLORS.length):Math.floor(Math.random()*4);
+  const r=W*(rare?.145:.12);
+  const x=r*1.4+Math.random()*(W-r*2.8);
+  const b=new Jelly(x,-r*1.7,ci,rare);
+  if(initial){b.y=H*(.32+Math.random()*.42);b.vy=0;}
+  blocks.push(b);
+}
+for(let i=0;i<5;i++)spawn(true);
+
+function showToast(text){
+  toast.textContent=text;toast.classList.add('visible');
+  clearTimeout(showToast.t);showToast.t=setTimeout(()=>toast.classList.remove('visible'),1200);
+}
+function rewardLabel(x,y,text,color){
+  const el=document.createElement('div');el.className='pop-label';el.textContent=text;
+  el.style.left=x+'px';el.style.top=y+'px';el.style.color=rgba(color,.98);
+  game.appendChild(el);setTimeout(()=>el.remove(),900);
+}
+function burst(x,y,color,n=10){
+  for(let i=0;i<n;i++)drops.push({x,y,vx:(Math.random()-.5)*100,vy:(Math.random()-.8)*110,life:.55+Math.random()*.25,r:2+Math.random()*4,color});
+}
+function colorBonus(a,b){
+  if(a===b)return 1;
+  const d=Math.abs(a-b);
+  return 1.18+(d%3)*.08;
+}
+function popBlock(b,auto=false){
+  const at=blocks.indexOf(b);if(at<0)return;
+  const near=blocks.filter(o=>o!==b).map(o=>({o,d:Math.hypot(o.x-b.x,o.y-b.y)})).sort((a,b)=>a.d-b.d).slice(0,3);
+  let local=1;
+  for(const {o,d} of near){
+    const reach=(b.r+o.r)*2.15;if(d>reach)continue;
+    const different=o.colorIndex!==b.colorIndex;
+    if(different)local=Math.max(local,colorBonus(o.colorIndex,b.colorIndex));
+    const t=clamp(1-d/reach,.16,.48);
+    o.mass=clamp(o.mass+b.mass*t*.18,.75,2.25);
+    o.color=mix(o.color,b.color,different?.34:.14);
+    streams.push({x1:b.x,y1:b.y,x2:o.x,y2:o.y,color:b.color.slice(),life:.42,max:.42,width:Math.max(5,b.r*.16)});
+    const nx=(o.x-b.x)/(d||1),ny=(o.y-b.y)/(d||1);
+    o.vx+=nx*34*t;o.vy+=ny*22*t;o.hit=Math.max(o.hit,.75);
+    if(different&&Math.random()<.35)o.colorIndex=b.colorIndex;
+  }
+  combo=clamp(combo*(auto?1.02:1.06)*local,1,12);comboTimer=2.5;
+  const reward=Math.max(1,Math.round((b.rare?18:6)*(1+save.value*.34)*combo));
+  save.coins+=reward;save.pops++;blocks.splice(at,1);
+  burst(b.x,b.y,b.color,b.rare?16:10);rewardLabel(b.x,b.y,'+'+reward,b.color);
+  hint.classList.add('hidden');persist();
+}
+
+function kickSurface(b,nx,ny,amount){
+  for(const p of b.nodes){
+    const len=Math.hypot(p.x,p.y)||1;
+    const px=p.x/len,py=p.y/len;
+    const align=Math.max(0,px*nx+py*ny);
+    const w=Math.pow(align,3.2);
+    p.vx-=nx*amount*w;
+    p.vy-=ny*amount*w;
+  }
+}
+function solveSurface(b,dt,floor,left,right){
+  b.syncRest(false);
+  const nodes=b.nodes,N=nodes.length;
+  const spring=42,surface=22,damp=Math.pow(.82,dt*60);
+  for(let i=0;i<N;i++){
+    const p=nodes[i],prev=nodes[(i+N-1)%N],next=nodes[(i+1)%N];
+    const avgX=(prev.x+next.x)*.5,avgY=(prev.y+next.y)*.5;
+    p.vx+=(p.tx-p.x)*spring*dt+(avgX-p.x)*surface*dt;
+    p.vy+=(p.ty-p.y)*spring*dt+(avgY-p.y)*surface*dt;
+    p.vx*=damp;p.vy*=damp;
+  }
+  for(const p of nodes){
+    p.x+=p.vx*dt;p.y+=p.vy*dt;
+    const wx=b.x+p.x,wy=b.y+p.y;
+    if(wy>floor){
+      const pen=wy-floor;
+      p.y-=pen;
+      p.vy=Math.min(0,p.vy)*-.12;
+      const side=Math.sign(p.x||1);
+      p.vx+=side*pen*15*dt;
+    }
+    if(wx<left){
+      const pen=left-wx;p.x+=pen;p.vx=Math.abs(p.vx)*.12;
+    }else if(wx>right){
+      const pen=wx-right;p.x-=pen;p.vx=-Math.abs(p.vx)*.12;
+    }
+  }
+}
+function physics(dt){
+  const floor=H*.835,left=W*.04,right=W*.96,g=500;
+  for(const b of blocks){
+    b.age+=dt;b.vy+=g*dt;b.vx*=Math.pow(.992,dt*60);b.spin*=Math.pow(.985,dt*60);
+    b.x+=b.vx*dt;b.y+=b.vy*dt;b.angle+=b.spin*dt;
+    const r=b.r*.76;
+    if(b.x-r<left){const impact=Math.abs(b.vx);b.x=left+r;b.vx=Math.abs(b.vx)*.18;kickSurface(b,-1,0,impact*.45);}
+    if(b.x+r>right){const impact=Math.abs(b.vx);b.x=right-r;b.vx=-Math.abs(b.vx)*.18;kickSurface(b,1,0,impact*.45);}
+    if(b.y+r>floor){
+      const impact=Math.abs(b.vy);b.y=floor-r;b.vy=-impact*.07;
+      if(impact<34)b.vy=0;
+      b.vx*=.82;b.spin*=.58;b.hit=Math.max(b.hit,clamp(impact/340,.18,1));
+      kickSurface(b,0,1,impact*.58);
+    }
+  }
+  for(let pass=0;pass<4;pass++)for(let i=0;i<blocks.length;i++)for(let j=i+1;j<blocks.length;j++){
+    const a=blocks[i],b=blocks[j],dx=b.x-a.x,dy=b.y-a.y;
+    const d=Math.hypot(dx,dy)||.001,min=(a.r+b.r)*.62;if(d>=min)continue;
+    const nx=dx/d,ny=dy/d,over=min-d,total=a.mass+b.mass;
+    const move=over*.46;
+    a.x-=nx*move*(b.mass/total);a.y-=ny*move*(b.mass/total);
+    b.x+=nx*move*(a.mass/total);b.y+=ny*move*(a.mass/total);
+    const rvx=b.vx-a.vx,rvy=b.vy-a.vy,sep=rvx*nx+rvy*ny;
+    if(sep<0){
+      const imp=-sep*.12;
+      a.vx-=nx*imp*b.mass/total;a.vy-=ny*imp*b.mass/total;
+      b.vx+=nx*imp*a.mass/total;b.vy+=ny*imp*a.mass/total;
+    }
+    const force=clamp(over/min,0,1)*105+Math.max(0,-sep)*.18;
+    kickSurface(a,nx,ny,force);
+    kickSurface(b,-nx,-ny,force);
+    a.hit=Math.max(a.hit,force/120);b.hit=Math.max(b.hit,force/120);
+  }
+  for(const b of blocks){
+    b.hit=Math.max(0,b.hit-dt*1.8);
+    solveSurface(b,dt,floor,left,right);
+  }
+}
+
+function jellyPath(b){
+  const pts=b.nodes;
+  if(!pts.length)return;
+  ctx.beginPath();
+  const first=pts[0],last=pts[pts.length-1];
+  ctx.moveTo((last.x+first.x)*.5,(last.y+first.y)*.5);
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i],n=pts[(i+1)%pts.length];
+    const mx=(p.x+n.x)*.5,my=(p.y+n.y)*.5;
+    ctx.quadraticCurveTo(p.x,p.y,mx,my);
+  }
+  ctx.closePath();
+}
+function drawJelly(b){
+  ctx.save();ctx.translate(b.x,b.y);ctx.rotate(b.angle);
+  const grad=ctx.createLinearGradient(-b.r*.65,-b.r*.72,b.r*.62,b.r*.68);
+  grad.addColorStop(0,rgba(mix(b.color,[255,255,255],.3),.58));
+  grad.addColorStop(.46,rgba(b.color,.42));
+  grad.addColorStop(1,rgba(mix(b.color,[18,48,112],.18),.55));
+  ctx.shadowColor='rgba(2,18,58,.26)';ctx.shadowBlur=b.r*.34;ctx.shadowOffsetY=b.r*.16;
+  jellyPath(b);ctx.fillStyle=grad;ctx.fill();
+  ctx.shadowColor='transparent';
+  ctx.lineWidth=Math.max(1.2,b.r*.016);ctx.strokeStyle='rgba(248,252,255,.34)';ctx.stroke();
+
+  const top=b.nodes.reduce((best,p)=>p.y<best.y?p:best,b.nodes[0]);
+  ctx.save();ctx.globalCompositeOperation='screen';ctx.globalAlpha=.6;
+  const hi=ctx.createRadialGradient(top.x-b.r*.1,top.y+b.r*.12,0,top.x-b.r*.1,top.y+b.r*.12,b.r*.62);
+  hi.addColorStop(0,'rgba(255,255,255,.46)');hi.addColorStop(.32,'rgba(255,255,255,.11)');hi.addColorStop(1,'rgba(255,255,255,0)');
+  jellyPath(b);ctx.fillStyle=hi;ctx.fill();ctx.restore();
+
+  ctx.save();ctx.globalAlpha=.23;ctx.fillStyle='white';
+  for(let i=0;i<3;i++){
+    const a=b.phase+i*2.1;
+    ctx.beginPath();ctx.arc(Math.cos(a)*b.r*.18,Math.sin(a*.7)*b.r*.16,b.r*(.022+i*.005),0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+  ctx.restore();
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  const floor=H*.835;
+  const ground=ctx.createLinearGradient(0,floor-H*.04,0,H);
+  ground.addColorStop(0,'rgba(210,230,255,.04)');
+  ground.addColorStop(.12,'rgba(20,58,145,.28)');
+  ground.addColorStop(1,'rgba(9,35,98,.72)');
+  ctx.fillStyle=ground;ctx.fillRect(0,floor-H*.025,W,H-floor+H*.025);
+  ctx.strokeStyle='rgba(225,240,255,.22)';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,floor);ctx.lineTo(W,floor);ctx.stroke();
+  for(const b of blocks){
+    const d=clamp((floor-b.y)/(H*.5),0,1);
+    const a=.22*(1-d);if(a<=.002)continue;
+    ctx.save();ctx.globalAlpha=a;ctx.fillStyle='rgba(4,22,72,.9)';
+    ctx.beginPath();ctx.ellipse(b.x,floor,b.r*1.2,b.r*.24,0,0,Math.PI*2);ctx.fill();ctx.restore();
+  }
+  for(let i=streams.length-1;i>=0;i--){
+    const st=streams[i];st.life-=1/60;if(st.life<=0){streams.splice(i,1);continue;}
+    const t=1-st.life/st.max,alpha=Math.sin(Math.PI*clamp(t,0,1))*.28;
+    const mx=(st.x1+st.x2)/2,my=(st.y1+st.y2)/2-18*Math.sin(t*Math.PI);
+    ctx.save();ctx.globalAlpha=alpha;ctx.strokeStyle=rgba(st.color,.9);ctx.lineWidth=st.width*(1-t*.45);ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(st.x1,st.y1);ctx.quadraticCurveTo(mx,my,st.x2,st.y2);ctx.stroke();ctx.restore();
+  }
+  for(const b of [...blocks].sort((a,b)=>a.y-b.y))drawJelly(b);
+  for(let i=drops.length-1;i>=0;i--){
+    const p=drops[i];p.life-=1/60;if(p.life<=0){drops.splice(i,1);continue;}
+    p.x+=p.vx/60;p.y+=p.vy/60;p.vy+=160/60;p.vx*=.986;
+    ctx.globalAlpha=clamp(p.life/.8,0,1)*.72;ctx.fillStyle=rgba(p.color,.85);ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();
+  }
+  ctx.globalAlpha=1;
+}
+function hitFromPointer(e){
+  const r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
+  let hit=null,dist=Infinity;
+  for(const b of blocks){const d=Math.hypot(x-b.x,y-b.y);if(d<b.r*.82&&d<dist){hit=b;dist=d;}}
+  return hit;
+}
+canvas.addEventListener('pointerdown',e=>{if(!shop.hidden)return;const b=hitFromPointer(e);if(b)popBlock(b,false);});
+
+const upgrades=[
+  {id:'spawn',name:'Мягкий поток',desc:'Новые желе падают чаще.',base:70,scale:2.05,max:8},
+  {id:'value',name:'Плотный сироп',desc:'Каждый лопнутый блок приносит больше GEL.',base:110,scale:2.15,max:8},
+  {id:'auto',name:'Автопоп',desc:'Иногда лопает спокойный одиночный блок.',base:450,scale:2.5,max:5},
+  {id:'rare',name:'Редкие оттенки',desc:'Повышает шанс крупного редкого желе.',base:800,scale:2.6,max:5}
+];
+const price=u=>save[u.id]>=u.max?null:Math.round(u.base*Math.pow(u.scale,save[u.id]||0));
+function renderShop(){
+  upgradeGrid.innerHTML='';
+  for(const u of upgrades){
+    const p=price(u),lvl=save[u.id]||0,b=document.createElement('button');b.type='button';b.className='upgrade';b.disabled=p===null||save.coins<p;
+    b.innerHTML=`<span><span class="name">${u.name}</span><span class="desc">${u.desc}</span><span class="level">уровень ${lvl}/${u.max}</span></span><span class="price">${p===null?'MAX':fmt(p)+' GEL'}</span>`;
+    b.addEventListener('click',()=>{const cost=price(u);if(cost===null||save.coins<cost)return;save.coins-=cost;save[u.id]++;persist();renderShop();updateHud();showToast(u.name+' улучшен');});
+    upgradeGrid.appendChild(b);
+  }
+}
+shopButton.addEventListener('click',()=>{shop.hidden=false;renderShop();});
+closeShop.addEventListener('click',()=>{shop.hidden=true;});
+function updateHud(){
+  coinsEl.textContent=fmt(save.coins);countEl.textContent=String(blocks.length);
+  comboEl.textContent='×'+combo.toFixed(combo<2?1:0);comboPill.dataset.hot=combo>1.3?'true':'false';
+}
+function frame(now){
+  const dt=Math.min(.033,(now-last)/1000||.016);last=now;
+  if(shop.hidden){
+    spawnClock+=dt;const interval=Math.max(.68,1.8-save.spawn*.12);
+    while(spawnClock>interval){spawnClock-=interval;spawn();}
+    if(save.auto>0){
+      autoClock+=dt;const gap=Math.max(2.8,9-save.auto*1.15);
+      if(autoClock>gap&&blocks.length>5){autoClock=0;const pool=blocks.filter(b=>b.y>H*.28&&b.y<H*.82);if(pool.length)popBlock(pool[Math.floor(Math.random()*pool.length)],true);}
+    }
+    if(comboTimer>0)comboTimer-=dt;else combo=lerp(combo,1,clamp(dt*1.25,0,1));
+    physics(dt);
+  }
+  render();updateHud();requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+setInterval(persist,5000);
+window.addEventListener('pagehide',persist);
