@@ -75,13 +75,29 @@ new ResizeObserver(resize).observe(game);resize();
 
 class Jelly{
   constructor(x,y,colorIndex,rare=false){
-    this.id=id++;this.x=x;this.y=y;this.vx=(Math.random()-.5)*14;this.vy=8+Math.random()*18;
+    this.id=id++;this.x=x;this.y=y;this.vx=(Math.random()-.5)*10;this.vy=6+Math.random()*12;
     this.colorIndex=colorIndex;this.color=COLORS[colorIndex].rgb.slice();this.rare=rare;
     this.base=W*(rare?.145:.112+Math.random()*.018);this.mass=rare?1.35:1;
-    this.angle=(Math.random()-.5)*.14;this.spin=(Math.random()-.5)*.18;
-    this.sx=1;this.sy=1;this.hit=0;this.age=0;this.phase=Math.random()*Math.PI*2;
+    this.angle=(Math.random()-.5)*.08;this.spin=(Math.random()-.5)*.08;
+    this.hit=0;this.age=0;this.phase=Math.random()*Math.PI*2;
+    this.nodes=Array.from({length:16},(_,i)=>({x:0,y:0,vx:0,vy:0,i}));
+    this.syncRest(true);
   }
   get r(){return this.base*Math.sqrt(this.mass);}
+  restPoint(i){
+    const a=i/this.nodes.length*Math.PI*2,ca=Math.cos(a),sa=Math.sin(a);
+    const n=5.2;
+    const q=1/Math.pow(Math.pow(Math.abs(ca),n)+Math.pow(Math.abs(sa),n),1/n);
+    const r=this.r*.78*q;
+    return {x:ca*r,y:sa*r};
+  }
+  syncRest(snap=false){
+    for(const p of this.nodes){
+      const t=this.restPoint(p.i);
+      if(snap){p.x=t.x;p.y=t.y;}
+      p.tx=t.x;p.ty=t.y;
+    }
+  }
 }
 
 function spawn(initial=false){
@@ -136,72 +152,122 @@ function popBlock(b,auto=false){
   hint.classList.add('hidden');persist();
 }
 
+function kickSurface(b,nx,ny,amount){
+  for(const p of b.nodes){
+    const len=Math.hypot(p.x,p.y)||1;
+    const px=p.x/len,py=p.y/len;
+    const align=Math.max(0,px*nx+py*ny);
+    const w=Math.pow(align,3.2);
+    p.vx-=nx*amount*w;
+    p.vy-=ny*amount*w;
+  }
+}
+function solveSurface(b,dt,floor,left,right){
+  b.syncRest(false);
+  const nodes=b.nodes,N=nodes.length;
+  const spring=42,surface=22,damp=Math.pow(.82,dt*60);
+  for(let i=0;i<N;i++){
+    const p=nodes[i],prev=nodes[(i+N-1)%N],next=nodes[(i+1)%N];
+    const avgX=(prev.x+next.x)*.5,avgY=(prev.y+next.y)*.5;
+    p.vx+=(p.tx-p.x)*spring*dt+(avgX-p.x)*surface*dt;
+    p.vy+=(p.ty-p.y)*spring*dt+(avgY-p.y)*surface*dt;
+    p.vx*=damp;p.vy*=damp;
+  }
+  for(const p of nodes){
+    p.x+=p.vx*dt;p.y+=p.vy*dt;
+    const wx=b.x+p.x,wy=b.y+p.y;
+    if(wy>floor){
+      const pen=wy-floor;
+      p.y-=pen;
+      p.vy=Math.min(0,p.vy)*-.12;
+      const side=Math.sign(p.x||1);
+      p.vx+=side*pen*15*dt;
+    }
+    if(wx<left){
+      const pen=left-wx;p.x+=pen;p.vx=Math.abs(p.vx)*.12;
+    }else if(wx>right){
+      const pen=wx-right;p.x-=pen;p.vx=-Math.abs(p.vx)*.12;
+    }
+  }
+}
 function physics(dt){
   const floor=H*.835,left=W*.04,right=W*.96,g=500;
   for(const b of blocks){
-    b.age+=dt;b.vy+=g*dt;b.vx*=Math.pow(.991,dt*60);b.spin*=Math.pow(.986,dt*60);
+    b.age+=dt;b.vy+=g*dt;b.vx*=Math.pow(.992,dt*60);b.spin*=Math.pow(.985,dt*60);
     b.x+=b.vx*dt;b.y+=b.vy*dt;b.angle+=b.spin*dt;
-    const r=b.r;
-    if(b.x-r<left){b.x=left+r;b.vx=Math.abs(b.vx)*.42;b.hit=.45}
-    if(b.x+r>right){b.x=right-r;b.vx=-Math.abs(b.vx)*.42;b.hit=.45}
+    const r=b.r*.76;
+    if(b.x-r<left){const impact=Math.abs(b.vx);b.x=left+r;b.vx=Math.abs(b.vx)*.18;kickSurface(b,-1,0,impact*.45);}
+    if(b.x+r>right){const impact=Math.abs(b.vx);b.x=right-r;b.vx=-Math.abs(b.vx)*.18;kickSurface(b,1,0,impact*.45);}
     if(b.y+r>floor){
-      const impact=Math.abs(b.vy);b.y=floor-r;b.vy=-impact*.12;
-      if(impact<40)b.vy=0;b.vx*=.84;b.spin*=.72;b.hit=Math.max(b.hit,clamp(impact/400,.14,.9));
+      const impact=Math.abs(b.vy);b.y=floor-r;b.vy=-impact*.07;
+      if(impact<34)b.vy=0;
+      b.vx*=.82;b.spin*=.58;b.hit=Math.max(b.hit,clamp(impact/340,.18,1));
+      kickSurface(b,0,1,impact*.58);
     }
   }
-  for(let pass=0;pass<3;pass++)for(let i=0;i<blocks.length;i++)for(let j=i+1;j<blocks.length;j++){
+  for(let pass=0;pass<4;pass++)for(let i=0;i<blocks.length;i++)for(let j=i+1;j<blocks.length;j++){
     const a=blocks[i],b=blocks[j],dx=b.x-a.x,dy=b.y-a.y;
-    const d=Math.hypot(dx,dy)||.001,min=(a.r+b.r)*.72;if(d>=min)continue;
+    const d=Math.hypot(dx,dy)||.001,min=(a.r+b.r)*.62;if(d>=min)continue;
     const nx=dx/d,ny=dy/d,over=min-d,total=a.mass+b.mass;
-    a.x-=nx*over*(b.mass/total)*.5;a.y-=ny*over*(b.mass/total)*.5;
-    b.x+=nx*over*(a.mass/total)*.5;b.y+=ny*over*(a.mass/total)*.5;
+    const move=over*.46;
+    a.x-=nx*move*(b.mass/total);a.y-=ny*move*(b.mass/total);
+    b.x+=nx*move*(a.mass/total);b.y+=ny*move*(a.mass/total);
     const rvx=b.vx-a.vx,rvy=b.vy-a.vy,sep=rvx*nx+rvy*ny;
-    if(sep<0){const imp=-sep*.18;a.vx-=nx*imp*b.mass/total;a.vy-=ny*imp*b.mass/total;b.vx+=nx*imp*a.mass/total;b.vy+=ny*imp*a.mass/total;}
-    const s=clamp(over/min*3.8,.06,1);
-    a.hit=Math.max(a.hit,s);b.hit=Math.max(b.hit,s);
-    a.sx=lerp(a.sx,1+Math.abs(nx)*s*.5,.58);a.sy=lerp(a.sy,1-Math.abs(ny)*s*.42,.58);
-    b.sx=lerp(b.sx,1+Math.abs(nx)*s*.5,.58);b.sy=lerp(b.sy,1-Math.abs(ny)*s*.42,.58);
+    if(sep<0){
+      const imp=-sep*.12;
+      a.vx-=nx*imp*b.mass/total;a.vy-=ny*imp*b.mass/total;
+      b.vx+=nx*imp*a.mass/total;b.vy+=ny*imp*a.mass/total;
+    }
+    const force=clamp(over/min,0,1)*105+Math.max(0,-sep)*.18;
+    kickSurface(a,nx,ny,force);
+    kickSurface(b,-nx,-ny,force);
+    a.hit=Math.max(a.hit,force/120);b.hit=Math.max(b.hit,force/120);
   }
   for(const b of blocks){
-    b.hit=Math.max(0,b.hit-dt*2.2);
-    const wobble=Math.sin(b.age*4.2+b.phase)*.025*(1+b.hit*2.8);
-    b.sx=lerp(b.sx,1+wobble,clamp(dt*7,0,1));b.sy=lerp(b.sy,1-wobble,clamp(dt*7,0,1));
+    b.hit=Math.max(0,b.hit-dt*1.8);
+    solveSurface(b,dt,floor,left,right);
   }
 }
 
-function jellyPath(size,corner,b){
-  const pts=12,rx=size*.5,ry=size*.5;
+function jellyPath(b){
+  const pts=b.nodes;
+  if(!pts.length)return;
   ctx.beginPath();
-  for(let i=0;i<pts;i++){
-    const a=i/pts*Math.PI*2;
-    const ca=Math.cos(a),sa=Math.sin(a);
-    const square=1/Math.pow(Math.pow(Math.abs(ca),5)+Math.pow(Math.abs(sa),5),1/5);
-    const pulse=1+Math.sin(b.age*3.4+b.phase+i*.9)*.018+b.hit*Math.sin(i*1.7+b.phase)*.045;
-    const x=ca*rx*square*pulse,y=sa*ry*square*pulse;
-    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  const first=pts[0],last=pts[pts.length-1];
+  ctx.moveTo((last.x+first.x)*.5,(last.y+first.y)*.5);
+  for(let i=0;i<pts.length;i++){
+    const p=pts[i],n=pts[(i+1)%pts.length];
+    const mx=(p.x+n.x)*.5,my=(p.y+n.y)*.5;
+    ctx.quadraticCurveTo(p.x,p.y,mx,my);
   }
   ctx.closePath();
 }
 function drawJelly(b){
   ctx.save();ctx.translate(b.x,b.y);ctx.rotate(b.angle);
-  ctx.scale(clamp(b.sx*(1+b.hit*.08),.72,1.4),clamp(b.sy*(1-b.hit*.08),.62,1.34));
-  const s=b.r*1.72;
-  const grad=ctx.createLinearGradient(-s*.42,-s*.58,s*.42,s*.55);
-  grad.addColorStop(0,rgba(mix(b.color,[255,255,255],.28),.66));
-  grad.addColorStop(.48,rgba(b.color,.46));
-  grad.addColorStop(1,rgba(mix(b.color,[25,60,120],.2),.58));
-  ctx.shadowColor='rgba(3,20,65,.26)';ctx.shadowBlur=b.r*.34;ctx.shadowOffsetY=b.r*.15;
-  jellyPath(s,s*.28,b);ctx.fillStyle=grad;ctx.fill();
-  ctx.shadowColor='transparent';ctx.lineWidth=Math.max(1.2,b.r*.018);ctx.strokeStyle='rgba(246,252,255,.32)';ctx.stroke();
-  ctx.save();ctx.globalCompositeOperation='screen';ctx.globalAlpha=.58;
-  const hi=ctx.createRadialGradient(-s*.18,-s*.21,0,-s*.18,-s*.21,s*.38);
-  hi.addColorStop(0,'rgba(255,255,255,.52)');hi.addColorStop(.38,'rgba(255,255,255,.12)');hi.addColorStop(1,'rgba(255,255,255,0)');
-  ctx.beginPath();ctx.ellipse(-s*.14,-s*.17,s*.22,s*.13,-.45,0,Math.PI*2);ctx.fillStyle=hi;ctx.fill();ctx.restore();
-  ctx.save();ctx.globalAlpha=.24;ctx.fillStyle='white';
-  for(let i=0;i<3;i++){const q=b.r*(.026+i*.006);ctx.beginPath();ctx.arc((-0.18+i*.16)*s,.12*s+Math.sin(i+b.phase)*.05*s,q,0,Math.PI*2);ctx.fill();}
+  const grad=ctx.createLinearGradient(-b.r*.65,-b.r*.72,b.r*.62,b.r*.68);
+  grad.addColorStop(0,rgba(mix(b.color,[255,255,255],.3),.58));
+  grad.addColorStop(.46,rgba(b.color,.42));
+  grad.addColorStop(1,rgba(mix(b.color,[18,48,112],.18),.55));
+  ctx.shadowColor='rgba(2,18,58,.26)';ctx.shadowBlur=b.r*.34;ctx.shadowOffsetY=b.r*.16;
+  jellyPath(b);ctx.fillStyle=grad;ctx.fill();
+  ctx.shadowColor='transparent';
+  ctx.lineWidth=Math.max(1.2,b.r*.016);ctx.strokeStyle='rgba(248,252,255,.34)';ctx.stroke();
+
+  const top=b.nodes.reduce((best,p)=>p.y<best.y?p:best,b.nodes[0]);
+  ctx.save();ctx.globalCompositeOperation='screen';ctx.globalAlpha=.6;
+  const hi=ctx.createRadialGradient(top.x-b.r*.1,top.y+b.r*.12,0,top.x-b.r*.1,top.y+b.r*.12,b.r*.62);
+  hi.addColorStop(0,'rgba(255,255,255,.46)');hi.addColorStop(.32,'rgba(255,255,255,.11)');hi.addColorStop(1,'rgba(255,255,255,0)');
+  jellyPath(b);ctx.fillStyle=hi;ctx.fill();ctx.restore();
+
+  ctx.save();ctx.globalAlpha=.23;ctx.fillStyle='white';
+  for(let i=0;i<3;i++){
+    const a=b.phase+i*2.1;
+    ctx.beginPath();ctx.arc(Math.cos(a)*b.r*.18,Math.sin(a*.7)*b.r*.16,b.r*(.022+i*.005),0,Math.PI*2);ctx.fill();
+  }
   ctx.restore();
   ctx.restore();
 }
+
 function render(){
   ctx.clearRect(0,0,W,H);
   const floor=H*.835;
@@ -235,7 +301,7 @@ function render(){
 function hitFromPointer(e){
   const r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;
   let hit=null,dist=Infinity;
-  for(const b of blocks){const d=Math.hypot(x-b.x,y-b.y);if(d<b.r*.95&&d<dist){hit=b;dist=d;}}
+  for(const b of blocks){const d=Math.hypot(x-b.x,y-b.y);if(d<b.r*.82&&d<dist){hit=b;dist=d;}}
   return hit;
 }
 canvas.addEventListener('pointerdown',e=>{if(!shop.hidden)return;const b=hitFromPointer(e);if(b)popBlock(b,false);});
